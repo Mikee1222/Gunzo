@@ -754,6 +754,14 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         break_timers[uid] = end
         break_group_chat_ids[uid] = chat.id
         break_active.add(uid)
+        # Schedule break end notification
+        context.job_queue.run_once(
+            callback=notify_break_end,
+            when=timedelta(minutes=minutes),
+            chat_id=uid,
+            name=f"break_end_{uid}",
+            data={"uid": uid}
+        )
         return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Θα σε υπενθυμίσω.")
 
     # --- Custom break text handler elsewhere ---
@@ -2329,3 +2337,6 @@ if __name__ == "__main__":
     asyncio.run(main())  
 
     
+async def notify_break_end(context: ContextTypes.DEFAULT_TYPE):
+    uid = context.job.data["uid"]
+    await context.bot.send_message(chat_id=uid, text="🔔 Το διάλειμμά σου έληξε. Μπορείς να επιστρέψεις!")
