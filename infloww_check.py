@@ -756,10 +756,8 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         break_active.add(uid)
         # Schedule break end notification
         context.job_queue.run_once(
-            callback=notify_break_end,
-            when=timedelta(minutes=minutes),
-            chat_id=uid,
-            name=f"break_end_{uid}",
+            schedule_break_end_notification,
+            delay=timedelta(minutes=minutes),
             data={"uid": uid}
         )
         return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Θα σε υπενθυμίσω.")
@@ -2340,3 +2338,12 @@ if __name__ == "__main__":
 async def notify_break_end(context: ContextTypes.DEFAULT_TYPE):
     uid = context.job.data["uid"]
     await context.bot.send_message(chat_id=uid, text="🔔 Το διάλειμμά σου έληξε. Μπορείς να επιστρέψεις!")
+# === Break End Notification ===
+from telegram.ext import CallbackContext
+
+async def schedule_break_end_notification(context: CallbackContext):
+    uid = context.job.data["uid"]
+    await context.bot.send_message(
+        chat_id=uid,
+        text="🔔 Το διάλειμμα σου τελείωσε. Επιστροφή!"
+    )
