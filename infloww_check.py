@@ -1158,6 +1158,12 @@ async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_mode[uid]  = "on"
     on_times[uid]   = datetime.now(TZ)
     user_status.setdefault(uid, set())
+
+
+    # Αν ο χρήστης δεν έχει ενεργά μοντέλα (είναι τελείως off)
+    if not user_status[uid]:
+        USER_BREAK[uid] = 45
+
     # Ensure the user_status entry exists before copying previous_models
     user_status.setdefault(uid, set())
     previous_models = user_status[uid].copy()
