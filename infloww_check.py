@@ -365,6 +365,12 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
     chat = q.message.chat
     # --- Restart Bot via inline button ---
     if q.data == "restart_bot":
+        # Restrict to admins only (check Telegram admin status)
+        chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id)
+        if chat_member.status not in ["administrator", "creator"]:
+            await update.callback_query.answer("🚫 Μόνο οι admins μπορούν να κάνουν επανεκκίνηση του bot.", show_alert=True)
+            return
+        # Optionally, also restrict to ALLOWED_APPROVERS usernames
         if q.from_user.username not in ALLOWED_APPROVERS:
             return await q.answer("❌ Δεν έχετε δικαίωμα.", show_alert=True)
         await q.message.delete()
