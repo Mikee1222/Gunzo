@@ -756,8 +756,8 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         break_active.add(uid)
         # Schedule break end notification
         context.job_queue.run_once(
-            schedule_break_end_notification,
-            delay=timedelta(minutes=minutes),
+            end_break,
+            when=timedelta(minutes=minutes),
             data={"uid": uid}
         )
         return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Θα σε υπενθυμίσω.")
@@ -2347,3 +2347,10 @@ async def schedule_break_end_notification(context: CallbackContext):
         chat_id=uid,
         text="🔔 Το διάλειμμα σου τελείωσε. Επιστροφή!"
     )
+# --- End of break notification ---
+async def end_break(context: ContextTypes.DEFAULT_TYPE):
+    uid = context.job.data["uid"]
+    try:
+        await context.bot.send_message(chat_id=uid, text="⏱️ Το διάλειμμά σου ολοκληρώθηκε.")
+    except Exception as e:
+        print(f"Failed to send break end message to {uid}: {e}")
