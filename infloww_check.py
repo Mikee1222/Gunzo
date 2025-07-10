@@ -168,8 +168,8 @@ MAX_BREAK_MINUTES = 45
 # — In-memory state —
 user_names        = {}   # uid -> username
 user_status       = {}   # uid -> set(models)
-USER_BREAK = {}
 user_mode         = {}   # uid -> "on"/"off"
+USER_BREAK = {}
 on_times          = {}   # uid -> datetime
 
 mistake_status    = {}
@@ -1155,45 +1155,33 @@ async def handle_custom_break_choice(update: Update, context: ContextTypes.DEFAU
 async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
     print(f"[DEBUG] User {uid} triggered /on")
-    
-    user_names[uid] = u.username
-    user_mode[uid] = "on"
-    on_times[uid] = datetime.now(TZ)
-    
-    # Δημιουργεί το set αν δεν υπάρχει ήδη
-    user_status.setdefault(uid, set())
-
-    # ✅ Reset 45 λεπτών αν είναι τελείως off (δεν έχει μοντέλα)
-    if not user_status[uid]:
+    # Reset breaks only if the user was not on any model before (i.e. completely off)
+    if not user_status.get(uid):
         USER_BREAK[uid] = 45
-
+        USER_BREAK_USED[uid] = 0
+    user_names[uid] = u.username
+    user_mode[uid]  = "on"
+    on_times[uid]   = datetime.now(TZ)
+    user_status.setdefault(uid, set())
+    # Ensure the user_status entry exists before copying previous_models
+    user_status.setdefault(uid, set())
     previous_models = user_status[uid].copy()
-    USER_BREAK_USED[uid] = 0
-
     context.application.bot_data.setdefault("previous_models_map", {})[uid] = previous_models
-
     save_shift(uid)
 
-    # ✅ Μοντέλα που χρησιμοποιούνται ήδη από άλλους
-    taken_models = {
-        model
-        for uid_, models in user_status.items()
-        if user_mode.get(uid_) == "on" and uid_ != uid
-        for model in models
-    }
-
+    # ✅ Μοντέλα σε χρήση από άλλους
+    taken_models = {model for uid_, models in user_status.items() if user_mode.get(uid_) == "on" and uid_ != uid for model in models}
     available_models = [m for m in SHIFT_MODELS if m not in taken_models]
 
-    keyboard = [
-        [InlineKeyboardButton(model, callback_data=f"model_{model}")]
-        for model in available_models
-    ]
-    keyboard.append([InlineKeyboardButton("✅ Ολοκλήρωση", callback_data="done_selecting")])
-
-    await update.message.reply_text(
-        "📋 Επέλεξε μοντέλα για τη βάρδιά σου:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+    try: await update.message.delete()
+    except: pass
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🔛 *Shift ON!* Επέλεξε μοντέλα:",
+        reply_markup=build_keyboard(available_models, user_status.get(uid, set())),
+        parse_mode="Markdown"
     )
+    message_owner[(msg.chat.id, msg.message_id)] = uid
 
 # --- /onall handler ---
 async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1731,7 +1719,7 @@ async def handle_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Allow break if user has any active models or is in mistake mode
     if not user_status.get(uid) and mistake_mode.get(uid) != "on":
         return await update.message.reply_text(
-            "❌ Πρέπει να έχεις ενεργά μοντέλα σε βάρδια ή να είσαι σε mistake για να πάρεις διάλειμμα."
+            "❌ Πρέπει να έχεις ενεργά μοντέλα σε βάρδια για να πάρεις διάλειμμα."
         )
     print(f"[DEBUG] User {uid} triggered /break")
     buttons = [InlineKeyboardButton(f"{m}ʼ", callback_data=f"break_{m}") for m in [15,20,25,30,35,45]]
