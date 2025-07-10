@@ -168,6 +168,7 @@ MAX_BREAK_MINUTES = 45
 # — In-memory state —
 user_names        = {}   # uid -> username
 user_status       = {}   # uid -> set(models)
+USER_BREAK = {}
 user_mode         = {}   # uid -> "on"/"off"
 on_times          = {}   # uid -> datetime
 
