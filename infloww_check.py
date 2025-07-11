@@ -1876,5 +1876,16 @@ async def shift_reminder_checker(app):
                                     user_id = KNOWN_USERS.get(username)
                                     if user_id:
                                         try:
+                                            ack_callback = f"ack_reminder_{model}_{now.date().isoformat()}"
                                             keyboard = InlineKeyboardMarkup([[
-                                                InlineKeyboardButton("👍 Το είδα", callb<truncated__content/>
+                                                InlineKeyboardButton("👍 Το είδα", callback_data=ack_callback)
+                                            ]])
+                                            msg = await app.bot.send_message(
+                                                chat_id=user_id,
+                                                text=f"🔔 Υπενθύμιση: Σε 30' ξεκινά βάρδια για το μοντέλο {model}.",
+                                                reply_markup=keyboard
+                                            )
+                                            pending_acks[msg.message_id] = (user_id, GROUP_CHAT_ID, model, handle)
+                                            asyncio.create_task(check_ack(app, user_id, msg.message_id, model, handle))
+                                        except Exception as e:
+                                            logger.error(f"Error sending shift reminder to {user_id}: {e}")
