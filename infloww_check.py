@@ -1,6 +1,9 @@
 
 # === Notification Target ===
 GROUP_CHAT_ID = -1002123456789  # ID της ομαδικής συνομιλίας για ειδοποιήσεις live
+# ID and message to which bot should reply for certain commands
+TARGET_CHAT_ID = 2200364773  # chat ID from t.me/2200364773/25
+TARGET_REPLY_TO_MESSAGE_ID = 25  # reply to message number 25 in that chat
 
 # === Greek day names constant ===
 DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
@@ -1188,10 +1191,11 @@ async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=TARGET_CHAT_ID,
         text=f"🔛 *Shift ON!* Επέλεξε μοντέλα:",
         reply_markup=build_keyboard(available_models, user_status.get(uid, set())),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
     )
     message_owner[(msg.chat.id, msg.message_id)] = uid
 
@@ -1217,7 +1221,11 @@ async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
         f"Models: {models_text}"
     )
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        text=txt,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
+    )
 
 async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
@@ -1227,8 +1235,9 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_shift(uid)
     if not user_status.get(uid, set()):
         return await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Δεν έχεις ενεργά μοντέλα για να κάνεις OFF. Πρώτα χρησιμοποίησε /on."
+            chat_id=TARGET_CHAT_ID,
+            text="❌ Δεν έχεις ενεργά μοντέλα για να κάνεις OFF. Πρώτα χρησιμοποίησε /on.",
+            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
         )
     # Refactored check as per instructions
     if user_mode[uid] == "off" and not user_status.get(uid, set()):
@@ -1236,10 +1245,11 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=TARGET_CHAT_ID,
         text="🔴 *Shift OFF!* Αφαίρεσε μοντέλα:",
         reply_markup=build_keyboard(sorted(user_status.get(uid,set())), user_status.get(uid,set())),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
     )
     message_owner[(msg.chat.id, msg.message_id)] = uid
 
@@ -1266,7 +1276,11 @@ async def handle_offall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
         "🚩 Τελείωσε την βάρδιά του!"
     )
-    await context.bot.send_message(update.effective_chat.id, txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        text=txt,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
+    )
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -1397,7 +1411,12 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "## 📋 Γενικά  \n"
         "- `/active` – Ποιοι χρήστες είναι αυτή τη στιγμή σε βάρδια  \n"
         "- `/remaining` – Πόσα λεπτά διαλείμματος σου απομένουν  \n"
-        "- `/help` – Αυτό το μενού βοήθειας  \n"
+        "- `/help` – Αυτό το μενού βοήθειας  \n" 
+        "## 🧑‍💻 Program  \n"
+        "- `/myprogram –  Σου δειχνει το δικο σου προγραμμα της ημερας   \n"
+        "- `/onprogram – Βλεπει σε ποια models εισαι στο προγραμμα και κανει on αυτοματα \n"
+
+
     )
 
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -1717,7 +1736,11 @@ async def handle_onprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {datetime.now(TZ).strftime('%H:%M')}   ⏱ Duration: μόλις ξεκίνησε\n"
         f"Models: {models_text}"
     )
-    await update.message.reply_text(txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        text=txt,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID
+    )
 
 # --- /break_balance handler ---
 async def handle_break_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1774,6 +1797,22 @@ async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(
             f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ."
         )
+
+
+# --- Break end notification job ---
+async def end_break(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Καλείται όταν λήγει το διάλειμμα του χρήστη.
+    Στέλνει προσωπικό μήνυμα στον χρήστη.
+    """
+    uid = context.job.data["uid"]
+    try:
+        await context.bot.send_message(
+            chat_id=uid,
+            text="⏱️ Το διάλειμμά σου ολοκληρώθηκε. /back"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send break end notification to {uid}: {e}")
 
 async def break_checker():
     app = Application.builder().token(TOKEN).build()
