@@ -1833,44 +1833,37 @@ sent_reminders = set()  # keep track of (date_str, model, chatter_name)
 sent_late_reminders = set()  # keep track of late alerts (date, model, chatter_name)
 
 async def shift_reminder_checker(app):
-    from datetime import datetime, timedelta, time
+    from datetime import datetime, timedelta
     while True:
         try:
             rows = fetch_sheet_values()
             if rows and len(rows) > 1:
                 days = rows[0][1:]
-                # determine today's column index
                 today_idx = datetime.now(TZ).weekday()
                 if 0 <= today_idx < len(days):
-                    # for each row (model schedule)
                     for row in rows[1:]:
                         model = row[0].strip()
                         cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
                         if not cell:
                             continue
-                        # split lines for morning/afternoon
                         lines = [p.strip() for p in cell.splitlines() if p.strip()]
                         for entry in lines:
-                            # parse time and chatter
                             parts = entry.split()
-                            time_range = parts[0]  # e.g. "12:00-20:00" or "12:00-20:00"
-                            # normalize with hyphen
+                            time_range = parts[0]
                             if '-' not in time_range and len(parts) >= 2 and ':' in parts[1]:
                                 time_range = time_range + '-' + parts[1]
                                 chatter_name = parts[2] if len(parts) > 2 else ""
                             else:
                                 chatter_name = parts[-1]
                             start_str = time_range.split('-')[0]
-                            start_dt = TZ.localize(datetime.combine(datetime.now(TZ).date(), datetime.strptime(start_str, "%H:%M").time()))
+                            start_dt = TZ.localize(datetime.combine(datetime.now(TZ).date(),
+                                                 datetime.strptime(start_str, "%H:%M").time()))
                             remind_dt = start_dt - timedelta(minutes=30)
                             now = datetime.now(TZ)
-                            # if it's time to send reminder (within the last minute) and not sent already
                             key = (now.date().isoformat(), model, chatter_name)
                             if remind_dt <= now < remind_dt + timedelta(minutes=1) and key not in sent_reminders:
                                 sent_reminders.add(key)
-                                # lookup handle
                                 handle = CHATTER_HANDLES.get(chatter_name, "")
-                                # send DM if chatter has a known Telegram ID
                                 if handle:
                                     username = handle.lstrip("@").lower()
                                     user_id = KNOWN_USERS.get(username)
@@ -1889,3 +1882,6 @@ async def shift_reminder_checker(app):
                                             asyncio.create_task(check_ack(app, user_id, msg.message_id, model, handle))
                                         except Exception as e:
                                             logger.error(f"Error sending shift reminder to {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"shift_reminder_checker error: {e}")
+        await asyncio.sleep(60)
