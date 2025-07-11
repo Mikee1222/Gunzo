@@ -102,7 +102,7 @@ async def handle_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Καλώς ήρθατε! Πληκτρολογήστε /help για να δείτε τις διαθέσιμες εντολές."
+        "👋 Καλώς ήρθατε! Πληκτρολογήστε /help για να δείτε τις διαθέσιμες εντολές.Επισης αν δεν το εχεις κανει ηδη πηγαινε στην ομαδικη και γραψε /myid"
     )
 
 # === CONFIG ===
@@ -267,7 +267,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
     key = (query.message.chat.id, query.message.message_id)
     owner_uid = message_owner.get(key)
     if owner_uid is not None and uid != owner_uid:
-        return await query.answer("❌ Δεν έχεις δικαίωμα να επιλέξεις αυτό το πλήκτρο.", show_alert=True)
+        return await query.answer("❌ Τι πας να κανεις εκει; Αφου δεν ειναι δικο σου το command , μην γινεσαι μουνοπανο τωρα..", show_alert=True)
 
     sel = query.data
     if not sel:
@@ -361,7 +361,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
     key = (q.message.chat.id, q.message.message_id)
     owner_uid = message_owner.get(key)
     if owner_uid is not None and uid != owner_uid:
-        return await q.answer("❌ Τι κάνεις εκεί; δεν είναι δικό σου command.", show_alert=True)
+        return await q.answer("❌ Τι πας να κανεις εκει; Αφου δεν ειναι δικο σου το command , μην γινεσαι μουνοπανο τωρα..", show_alert=True)
     sel = q.data
     chat = q.message.chat
     # --- Restart Bot via inline button ---
@@ -612,13 +612,13 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if mistake_mode[uid] == "off":
             if not selset:
                 txt = (
-                    f"🔴 Mistake OFF by @{user_names[uid]}\n"
+                    f"🔴 Mistake Βάρδια OFF by @{user_names[uid]}\n"
                     f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
                     "🚩 Τελείωσε η mistake βάρδιά του!"
                 )
             else:
                 txt = (
-                    f"🔴 Mistake OFF by @{user_names[uid]}\n"
+                    f"🔴 Mistake Βάρδια OFF by @{user_names[uid]}\n"
                     f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
                     f"Models: {', '.join(sorted(selset)) or 'κανένα'}"
                 )
@@ -632,7 +632,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
         else:
             txt = (
-                f"✅ Mistake ON by @{user_names[uid]}\n"
+                f"✅ Mistake Βάρδια ON by @{user_names[uid]}\n"
                 f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
                 f"Models: {', '.join(sorted(selset)) or 'κανένα'}"
             )
@@ -675,7 +675,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             save_shift(giver_uid)
 
         now = datetime.now(TZ)
-        dur = "μόλις ξεκίνησε την βάρδια"
+        dur = "Μόλις ξεκίνησε την βάρδια"
         added_info = f"\n➕ Νέα: {', '.join(sorted(models.split(', ')))}"
         shift_text = (
             f"🔛 Shift ON by @{user_names[tid]}\n"
@@ -754,7 +754,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             message_owner[(q.message.chat.id, q.message.message_id)] = uid
             used = USER_BREAK_USED.get(uid, 0)
             rem = MAX_BREAK_MINUTES - used
-            await context.bot.send_message(chat_id=chat.id, text=f"📏 Σου απομένουν {rem} λεπτά διαλείμματος.")
+            await context.bot.send_message(chat_id=chat.id, text=f"⌛️ Σου απομένουν {rem} λεπτά διαλείμματος.")
             return res
         minutes = int(val)
         context.user_data['break_duration'] = minutes
@@ -769,7 +769,7 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             when=timedelta(minutes=minutes),
             data={"uid": uid}
         )
-        return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Θα σε υπενθυμίσω.")
+        return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Να εισαι πισω στην ώρα σου αλλιως ξερεις.. προστιμο")
 
     # --- Custom break text handler elsewhere ---
 
@@ -1213,7 +1213,7 @@ async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await context.bot.send_message(
         chat_id=TARGET_CHAT_ID,
         reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=f"🔛 *Shift ON!* Επέλεξε μοντέλα:",
+        text=f"🔛 *Shift ON!* Σε μοντέλα εισαι σημερα;",
         reply_markup=build_keyboard(available_models, user_status.get(uid, set())),
         parse_mode="Markdown"
     )
@@ -1237,7 +1237,7 @@ async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dur = "μόλις ξεκίνησε την βάρδια"
     models_text = ", ".join(SHIFT_MODELS)
     txt = (
-        f"🔛 Shift ON ALL by @{user_names[uid]}\n"
+        f"🔛 Shift ON ΟΛΑ by @{user_names[uid]}\n"
         f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
         f"Models: {models_text}"
     )
@@ -1257,7 +1257,7 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
             reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-            text="❌ Δεν έχεις ενεργά μοντέλα για να κάνεις OFF. Πρώτα χρησιμοποίησε /on."
+            text="❌ Αφου δεν εχεις models ρε φρουτο.. τι κανεις;... Πρώτα χρησιμοποίησε /on."
         )
     # Refactored check as per instructions
     if user_mode[uid] == "off" and not user_status.get(uid, set()):
@@ -1309,7 +1309,7 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
             reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
-            text="❌ Δεν έχεις ενεργά μοντέλα."
+            text="❌ Πως θα το κανεις αυτο χωρις μοντέλα;Ο Einstein μπροστα σου ειναι τιποτα"
         )
     st = on_times.get(uid)
     dur = ""
@@ -1332,12 +1332,12 @@ async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tu = update.message.reply_to_message.from_user
         target_username = tu.username or ""
     else:
-        return await update.message.reply_text("❌ Κάνε reply ή @mention.")
+        return await update.message.reply_text("❌ Πως θα το δωσεις αμα δεν λες σε ποιον;Ε ρε που εμπλεξα..")
 
     username_key = target_username.lower()
     recipient_id = KNOWN_USERS.get(username_key)
     if not recipient_id:
-        return await update.message.reply_text(f"❌ Δεν βρέθηκε ο χρήστης @{target_username}.")
+        return await update.message.reply_text(f"❌ Δεν βρηκα τον @{target_username}.")
 
     # Filter models: only allow giving models the user owns
     uid = update.effective_user.id
@@ -1372,7 +1372,7 @@ async def handle_mistake_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
     msg = await context.bot.send_message(
         update.effective_chat.id,
-        text="🎯 *Mistake ON!* Επέλεξε μοντέλα:",
+        text="🎯 *Mistake ON!* Δωσε πονο , σε ποια θα μπεις;",
         reply_markup=build_keyboard(MISTAKE_MODELS, mistake_status[uid]),
         parse_mode="Markdown"
     )
@@ -1386,7 +1386,7 @@ async def handle_mistake_off(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not mistake_status.get(uid):
         return await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="❌ Δεν έχεις ενεργά Mistake μοντέλα για να κάνεις OFF."
+            text="❌Ρε Ευη τι πας να κανεις χωρις να εχεις models.. οχι και εσυ..."
         )
     try: await update.message.delete()
     except: pass
@@ -1403,7 +1403,7 @@ async def handle_mistake_status(update: Update, context: ContextTypes.DEFAULT_TY
     uid = update.effective_user.id
     sel = mistake_status.get(uid,set())
     if not sel:
-        return await context.bot.send_message(update.effective_chat.id, "❌ Δεν έχεις Mistake.")
+        return await context.bot.send_message(update.effective_chat.id, "❌ Αφου δεν εχεις...")
     st = mistake_on_times.get(uid)
     dur = ""
     if st:
@@ -1440,7 +1440,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- `/help` – Αυτό το μενού βοήθειας  \n" 
         "## 🧑‍💻 Program  \n"
         "- `/myprogram –  Σου δειχνει το δικο σου προγραμμα της ημερας   \n"
-        "- `/onprogram – Βλεπει σε ποια models εισαι στο προγραμμα και κανει on αυτοματα \n"
+        "- `/onprogram –  Βλεπει σε ποια models εισαι στο προγραμμα και κανει on αυτοματα   \n"
     )
 
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -1563,7 +1563,7 @@ async def handle_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
             reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
-            text='Δεν είναι κανείς ενεργός αυτή τη στιγμή.'
+            text='Τους πηρε ο υπνος.. παει η μπισνα'
         )
     lines = [f"{idx}. @{username} : {mods}{dur}" for idx, (username, mods, dur) in enumerate(active_items, start=1)]
     total = len(active_items)
@@ -1584,14 +1584,14 @@ async def handle_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if remaining>0:
         return await update.message.reply_text(f"⏳ Σου απομένουν {remaining}′ διάλειμμα.")
     else:
-        return await update.message.reply_text("Το διάλειμμά σου τελείωσε — /back")
+        return await update.message.reply_text("Το διάλειμμά σου τελείωσε , γυρνα πισω στην ομαδικη με /back")
 
 
 # --- /show_program handler ---
 async def handle_show_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = fetch_sheet_values()
     if not rows:
-        return await update.message.reply_text("❌ Το sheet είναι άδειο ή δεν βρέθηκαν δεδομένα.")
+        return await update.message.reply_text("❌ Ρε τσακιρη το προγραμμα....")
     days = rows[0][1:]
     # build schedule mapping day -> list of (model, morning, afternoon)
     schedule = {day: [] for day in days}
@@ -1838,7 +1838,7 @@ async def handle_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_status.get(uid) and mistake_mode.get(uid) != "on":
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text="❌ Πρέπει να έχεις ενεργά μοντέλα σε βάρδια για να πάρεις διάλειμμα.",
+            text="❌ Πως θα παρεις διαλλειμα χωρις να εχεις μπει βαρδια; Δηλαδη... πως θα βγαλεις λεφτα , ετσι; Συγκετρωνσου φιλε..",
             reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
         )
     buttons = [InlineKeyboardButton(f"{m}ʼ", callback_data=f"break_{m}") for m in [15,20,25,30,35,45]]
@@ -1888,13 +1888,13 @@ async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if USER_BREAK_USED[uid] > MAX_BREAK_MINUTES:
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text="🚫 Έχεις εξαντλήσει τα λεπτά διαλείμματος και θα γίνει έλεγχος.",
+            text="🚫 Πας να παρεις διαλλειμα ε; 45 λεπτα δεν εφταναν; Ενημρωνω .. τωρα θα δεις ",
             reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
         )
     else:
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text=f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ.",
+            text=f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ. Μπες να βγαλεις λεφτα γρηγορα",
             reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
         )
 
