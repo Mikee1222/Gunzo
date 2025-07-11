@@ -1,10 +1,16 @@
 
 # === Notification Target ===
-
 GROUP_CHAT_ID = -1002123456789  # ID της ομαδικής συνομιλίας για ειδοποιήσεις live
+# ID and message to which bot should reply for certain commands
+TARGET_CHAT_ID = -1002200364773  # chat ID from t.me/2200364773/25 (use -100 prefix for channels)
+TARGET_REPLY_TO_MESSAGE_ID = 25  # reply to message number 25 in that chat
+HELP_REPLY_TO_MESSAGE_ID = 25431  # reply to message number for /help in the target channel
+BREAK_REPLY_TO_MESSAGE_ID = 17862  # reply to message number for /break and related commands
+WEEKLY_REPLY_TO_MESSAGE_ID = 11276  # reply-to message for /weekly_program in target channel
+MYPROGRAM_REPLY_TO_MESSAGE_ID = 25515  # reply-to message number for /myprogram in target channel
 
-# === Command responses channel ===
-COMMAND_RESPONSE_CHAT_ID = -1002200364773  # t.me/2200364773
+ACTIVE_REPLY_TO_MESSAGE_ID = 25631  # reply-to message number for /active in the target channel
+STATUS_REPLY_TO_MESSAGE_ID = 25654  # reply to message number for /status in target channel
 
 # === Greek day names constant ===
 DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
@@ -14,8 +20,11 @@ KNOWN_USERS = {
     "tsaqiris": 1673725703,
     "mikekrp": 6431210056,
     "evi_nikolaidou": 6700819251,
-    "kostasmavridis": 1234567890,
     "maraggos": 2099171835,
+    "elias_drag": 2034365882,
+    "nikospapadop": 5864768017,
+    "bull056": 5536090159,
+    "riggersss": 1882063026,
 }
 
 # === Chatter name → Telegram handle mappings ===
@@ -91,20 +100,9 @@ async def handle_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Αυτή η chat ({chat_id}) καταγράφηκε για ειδοποιήσεις startup/shutdown.")
 
 
-# --- /start confirmation for Evi ---
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Preliminary confirmation menu for Evi
-    keyboard = [
-        [InlineKeyboardButton("Μακαρονια με κιμα", callback_data="evi_pasta")],
-        [InlineKeyboardButton("Γαριδες σαγανακι", callback_data="evi_shrimp")],
-        [InlineKeyboardButton("Σντιστελ", callback_data="evi_schnitzel")],
-        [InlineKeyboardButton("Πατατες", callback_data="evi_fries")],
-        [InlineKeyboardButton("McDonalds", callback_data="evi_mcd")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🛡️ Επιβεβαίωσε ότι είσαι η Εύη επιλέγοντας ένα από τα παρακάτω:",
-        reply_markup=reply_markup
+        "👋 Καλώς ήρθατε! Πληκτρολογήστε /help για να δείτε τις διαθέσιμες εντολές."
     )
 
 # === CONFIG ===
@@ -206,7 +204,6 @@ PREDEFINED_USERS = {
     "Tsaqiris": 6431210056,
     "mikekrp": 123456789,
     "Evi_Nikolaidou": 234567890,
-    "kostasmavridis": 345678901
 }
 
 removed_map = {}  # uid -> set(models removed during OFF)
@@ -685,7 +682,11 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
             f"Models: {', '.join(models.split(', '))}{added_info}"
         )
-        await context.bot.send_message(chat_id=original_chat, text=shift_text)
+        await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+            text=shift_text
+        )
 
         if giver_uid:
             remaining_models = user_status.get(giver_uid, set())
@@ -710,7 +711,11 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     f"🎁Έδωσε : {removed_models}\n"
                     f"✅ Παραμένει σε: {', '.join(remaining_models)}"
                 )
-            await context.bot.send_message(original_chat, off_txt)
+            await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+                text=off_txt
+            )
 
         return await context.bot.send_message(chat_id=tid, text=f"✅ Έκανες αποδοχή για: {models}")
 
@@ -786,7 +791,8 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         escaped_models = escape_markdown(models, version=2)
         escaped_target = escape_markdown(target, version=2)
         cm = await context.bot.send_message(
-            chat_id=chat.id,
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
             text=f"🔔 Πατήστε ✅ για να επιβεβαιώσετε μοντέλα *{escaped_models}* προς {escaped_target}:",
             parse_mode="MarkdownV2"
         )
@@ -849,14 +855,19 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     InlineKeyboardButton("✅ Αποδοχή", callback_data=f"acceptgive_{mid}")
                 ]])
             )
-            # Notify group chat that admins have approved and we're waiting on the recipient
+            # Notify the designated channel that admins have approved and we're waiting on the recipient
             await context.bot.send_message(
-                chat_id=chat.id,
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
                 text=f"🔔 Οι admins αποδέχτηκαν το αίτημά σου @{giver} και περιμένουμε από τον @{target} να πατήσει Αποδοχή για να γίνει το give."
             )
             return
         else:
-            return await context.bot.send_message(chat.id, f"❌ Απορρίφθηκε η απόδοση σε {target}.")
+            return await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+                text=f"❌ Απορρίφθηκε η απόδοση σε {target}."
+            )
 
 
     # --- Shift subsystem ---
@@ -956,7 +967,11 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Models: {', '.join(selset) or 'Δεν επελεξε models'}{added_info}"
             )
             try:
-                await context.bot.send_message(chat.id, txt)
+                await context.bot.send_message(
+                    chat_id=TARGET_CHAT_ID,
+                    reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+                    text=txt
+                )
             except RetryAfter as e:
                 logger.warning(f"Flood control on send_message: retry after {e.retry_after}s")
             except Exception as e:
@@ -1006,7 +1021,11 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Models: {', '.join(selset)}\n"
                 f"🗑 Αφαίρεσε: {', '.join(sorted(removed_models)) or 'καμία'}"
             )
-        await context.bot.send_message(chat.id, txt)
+        await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+            text=txt
+        )
         save_shift(uid)
         if user_mode[uid] == "off" and not selset:
             on_times.pop(uid, None)
@@ -1192,7 +1211,8 @@ async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
     msg = await context.bot.send_message(
-        chat_id=COMMAND_RESPONSE_CHAT_ID,
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
         text=f"🔛 *Shift ON!* Επέλεξε μοντέλα:",
         reply_markup=build_keyboard(available_models, user_status.get(uid, set())),
         parse_mode="Markdown"
@@ -1221,7 +1241,11 @@ async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
         f"Models: {models_text}"
     )
-    await context.bot.send_message(chat_id=COMMAND_RESPONSE_CHAT_ID, text=txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text=txt
+    )
 
 async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
@@ -1231,7 +1255,8 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_shift(uid)
     if not user_status.get(uid, set()):
         return await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
             text="❌ Δεν έχεις ενεργά μοντέλα για να κάνεις OFF. Πρώτα χρησιμοποίησε /on."
         )
     # Refactored check as per instructions
@@ -1240,7 +1265,8 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
     msg = await context.bot.send_message(
-        chat_id=COMMAND_RESPONSE_CHAT_ID,
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
         text="🔴 *Shift OFF!* Αφαίρεσε μοντέλα:",
         reply_markup=build_keyboard(sorted(user_status.get(uid,set())), user_status.get(uid,set())),
         parse_mode="Markdown"
@@ -1270,39 +1296,48 @@ async def handle_offall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
         "🚩 Τελείωσε την βάρδιά του!"
     )
-    await context.bot.send_message(chat_id=COMMAND_RESPONSE_CHAT_ID, text=txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text=txt
+    )
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    sel = user_status.get(uid,set())
+    sel = user_status.get(uid, set())
     if not sel:
-        return await context.bot.send_message(update.effective_chat.id, "❌ Δεν έχεις ενεργά μοντέλα.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
+            text="❌ Δεν έχεις ενεργά μοντέλα."
+        )
     st = on_times.get(uid)
     dur = ""
     if st:
-        d = datetime.now(TZ)-st; h,m = divmod(int(d.total_seconds()),3600)[0], divmod(int(d.total_seconds())%3600,60)[0]
+        d = datetime.now(TZ) - st
+        h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
         dur = f"\n⏱ {h}h {m}m"
-    await context.bot.send_message(update.effective_chat.id, f"📋 Models: {', '.join(sel)}{dur}")
+    return await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
+        text=f"📋 Models: {', '.join(sel)}{dur}"
+    )
 
 async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # target via reply or mention
-    if update.message.reply_to_message:
+    # extract first token after command as mention if present, else fallback to reply_to_message
+    parts = update.message.text.strip().split()
+    if len(parts) >= 2 and parts[1].startswith('@'):
+        target_username = parts[1].lstrip('@')
+    elif update.message.reply_to_message:
         tu = update.message.reply_to_message.from_user
-        target = tu.username
+        target_username = tu.username or ""
     else:
-        ents = [e for e in update.message.entities if e.type==MessageEntity.MENTION]
-        if not ents:
-            return await update.message.reply_text("❌ Κάνε reply ή @mention.")
-        m = ents[0]; target = update.message.text[m.offset:m.offset+m.length]
-        target = target.lstrip('@')
+        return await update.message.reply_text("❌ Κάνε reply ή @mention.")
 
-    username = target.lstrip('@').lower()
-
-    recipient_id = KNOWN_USERS.get(username)
+    username_key = target_username.lower()
+    recipient_id = KNOWN_USERS.get(username_key)
     if not recipient_id:
-        await context.bot.send_message(chat_id=update.effective_chat.id,
-                                       text=f"❌ Δεν βρέθηκε ο χρήστης @{username}.")
-        return
+        return await update.message.reply_text(f"❌ Δεν βρέθηκε ο χρήστης @{target_username}.")
 
     # Filter models: only allow giving models the user owns
     uid = update.effective_user.id
@@ -1318,13 +1353,14 @@ async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     from_u = update.effective_user.username
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"🎁 Ο @{from_u} θέλει να δώσει μοντέλο σε @{username}. Επιλέξτε:",
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text=f"🎁 Ο @{from_u} θέλει να δώσει μοντέλο σε @{target_username}. Επιλέξτε:",
         reply_markup=build_keyboard(sorted(owned_models), set())
     )
-    give_target[(msg.chat.id,msg.message_id)] = username
-    give_selected[(msg.chat.id,msg.message_id)] = set()
-    message_owner[(msg.chat.id,msg.message_id)] = update.effective_user.id
+    give_target[(msg.chat.id, msg.message_id)] = target_username
+    give_selected[(msg.chat.id, msg.message_id)] = set()
+    message_owner[(msg.chat.id, msg.message_id)] = update.effective_user.id
 
 async def handle_mistake_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u,uid = update.effective_user, update.effective_user.id
@@ -1376,7 +1412,7 @@ async def handle_mistake_status(update: Update, context: ContextTypes.DEFAULT_TY
     await context.bot.send_message(update.effective_chat.id, f"📋 Mistake: {', '.join(sel)}{dur}")
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    chat_id = TARGET_CHAT_ID
     # Determine image path
     script_dir = os.path.dirname(os.path.realpath(__file__))
     local_path = os.path.join(script_dir, 'gunzoagency.png')
@@ -1405,8 +1441,6 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "## 🧑‍💻 Program  \n"
         "- `/myprogram –  Σου δειχνει το δικο σου προγραμμα της ημερας   \n"
         "- `/onprogram – Βλεπει σε ποια models εισαι στο προγραμμα και κανει on αυτοματα \n"
-
-
     )
 
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -1419,7 +1453,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo=photo_file,
                     caption=help_message,
                     parse_mode="Markdown",
-                    reply_markup=restart_button
+                    reply_markup=restart_button,
+                    reply_to_message_id=HELP_REPLY_TO_MESSAGE_ID
                 )
                 return
         except Exception as e:
@@ -1430,7 +1465,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=chat_id,
         text=help_message,
         parse_mode="Markdown",
-        reply_markup=restart_button
+        reply_markup=restart_button,
+        reply_to_message_id=HELP_REPLY_TO_MESSAGE_ID
     )
 
 # Secret handler for !euh
@@ -1491,6 +1527,24 @@ async def handle_liveoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
     LIVE_SELECTED[(msg.chat.id, msg.message_id)] = set()
 
 async def handle_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Restrict /active to admins only
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=TARGET_CHAT_ID,
+            user_id=update.effective_user.id
+        )
+        if member.status not in ("administrator", "creator"):
+            return await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
+                text="🚫 Stalker τι κανεις; Μόνο οι admins μπορούν να χρησιμοποιήσουν αυτή την εντολή. Ντροπη σου"
+            )
+    except Exception:
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
+            text="🚫 Δεν μπορώ να επαληθεύσω δικαιώματα."
+        )
     now = datetime.now(TZ)
     active_items = []
     for uid, mods in user_status.items():
@@ -1507,14 +1561,16 @@ async def handle_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_items.append((username, mods_text, dur_text))
     if not active_items:
         return await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
             text='Δεν είναι κανείς ενεργός αυτή τη στιγμή.'
         )
     lines = [f"{idx}. @{username} : {mods}{dur}" for idx, (username, mods, dur) in enumerate(active_items, start=1)]
     total = len(active_items)
     message = "<b>Active Users:</b>\n" + "\n".join(lines) + f"\n\n<b>Σύνολο:</b> {total}"
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
         text=message,
         parse_mode="HTML"
     )
@@ -1589,7 +1645,11 @@ async def handle_show_program(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_weekly_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = fetch_sheet_values()
     if not rows or len(rows) < 2:
-        return await update.message.reply_text("❌ Δεν βρέθηκαν δεδομένα στο sheet.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=WEEKLY_REPLY_TO_MESSAGE_ID,
+            text="❌ Το sheet είναι άδειο ή δεν βρέθηκαν δεδομένα στο sheet."
+        )
     days = rows[0][1:]
     # build schedule per day
     schedule = {day: [] for day in days}
@@ -1609,7 +1669,12 @@ async def handle_weekly_program(update: Update, context: ContextTypes.DEFAULT_TY
             msg = f"<b>{day}</b>\n" + "\n".join([f"• {e}" for e in day_entries])
         else:
             msg = f"<b>{day}</b>\n• –"
-        await update.message.reply_text(msg, parse_mode="HTML")
+        await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=WEEKLY_REPLY_TO_MESSAGE_ID,
+            text=msg,
+            parse_mode="HTML"
+        )
 
 # --- /myprogram handler ---
 async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1625,17 +1690,29 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chatter_name = name
             break
     if not chatter_name:
-        return await update.message.reply_text("❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
+        )
     # Fetch sheet
     rows = fetch_sheet_values()
     if not rows or len(rows) < 2:
-        return await update.message.reply_text("❌ Δεν βρέθηκαν δεδομένα στο sheet.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+            text="❌ Δεν βρέθηκαν δεδομένα στο sheet."
+        )
     days = rows[0][1:]
     # Determine today's column index (0-based for days list)
     from datetime import datetime
     today_idx = datetime.now(TZ).weekday()
     if today_idx < 0 or today_idx >= len(days):
-        return await update.message.reply_text("❌ Σφάλμα στον προσδιορισμό της ημέρας.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+            text="❌ Σφάλμα στον προσδιορισμό της ημέρας."
+        )
     day_name = days[today_idx]
     # Collect assignments
     assignments = []
@@ -1655,10 +1732,18 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Include chatter name and handle
     raw_handle = CHATTER_HANDLES.get(chatter_name)
     if not raw_handle:
-        return await update.message.reply_text("❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
+        )
     handle = raw_handle.lstrip("@").lower()
     if handle != username.lower():
-        return await update.message.reply_text("❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
+        )
     header += f"\nChatter: {chatter_name}"
     if raw_handle:
         header += f", {raw_handle}"
@@ -1678,7 +1763,11 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"{time_range}  {model} ({shift_type})")
     # Combine and send
     message = header + "\n" + ("\n".join(lines) if lines else "– Δεν έχεις βάρδια.")
-    await update.message.reply_text(message)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
+        text=message
+    )
 
 # --- /onprogram handler ---
 async def handle_onprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1726,64 +1815,88 @@ async def handle_onprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕒 {datetime.now(TZ).strftime('%H:%M')}   ⏱ Duration: μόλις ξεκίνησε\n"
         f"Models: {models_text}"
     )
-    await context.bot.send_message(chat_id=COMMAND_RESPONSE_CHAT_ID, text=txt)
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text=txt
+    )
 
 # --- /break_balance handler ---
 async def handle_break_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     used = USER_BREAK_USED.get(uid, 0)
     remaining = max(0, MAX_BREAK_MINUTES - used)
-    await update.message.reply_text(f"📏 Έχεις {remaining} λεπτά διαθέσιμα για διάλειμμα.")
+    await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        text=f"📏 Έχεις {remaining} λεπτά διαθέσιμα για διάλειμμα.",
+        reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
+    )
 
+# --- /break handler ---
 async def handle_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    # Allow break if user has any active models or is in mistake mode
     if not user_status.get(uid) and mistake_mode.get(uid) != "on":
-        return await update.message.reply_text(
-            "❌ Πρέπει να έχεις ενεργά μοντέλα σε βάρδια για να πάρεις διάλειμμα."
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text="❌ Πρέπει να έχεις ενεργά μοντέλα σε βάρδια για να πάρεις διάλειμμα.",
+            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
         )
-    print(f"[DEBUG] User {uid} triggered /break")
     buttons = [InlineKeyboardButton(f"{m}ʼ", callback_data=f"break_{m}") for m in [15,20,25,30,35,45]]
-    buttons += [InlineKeyboardButton("Custom", callback_data="break_custom"),
-                InlineKeyboardButton("Cancel", callback_data="break_cancel")]
-    msg = await update.message.reply_text("☕ Επιλέξτε διάλειμμα:", reply_markup=InlineKeyboardMarkup([buttons[:4],buttons[4:]]))
+    buttons += [
+        InlineKeyboardButton("Custom", callback_data="break_custom"),
+        InlineKeyboardButton("Cancel", callback_data="break_cancel"),
+    ]
+    try:
+        await update.message.delete()
+    except:
+        pass
+    msg = await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        text="☕ Επιλέξτε διάλειμμα:",
+        reply_markup=InlineKeyboardMarkup([buttons[:4], buttons[4:]]),
+        reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
+    )
     message_owner[(msg.chat.id, msg.message_id)] = uid
 
+# --- /back handler ---
 async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     end = break_timers.get(uid)
     if not end:
-        return await update.message.reply_text("❌ Δεν ήσουν σε διάλειμμα.")
-
-    # Corrected actual break duration calculation (uses round)
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text="❌ Δεν ήσουν σε διάλειμμα.",
+            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
+        )
     now = datetime.now(TZ)
     start_time = context.user_data.get('break_start_time')
     if not start_time:
-        return await update.message.reply_text("❌ Δεν έχει αποθηκευτεί η ώρα έναρξης διαλείμματος.")
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text="❌ Δεν έχει αποθηκευτεί η ώρα έναρξης διαλείμματος.",
+            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
+        )
     duration_delta = now - start_time
-    actual_duration = max(1, round(duration_delta.total_seconds() / 60))  # correct rounding
-
+    actual_duration = max(1, round(duration_delta.total_seconds() / 60))
     used = USER_BREAK_USED.get(uid, 0)
     USER_BREAK_USED[uid] = used + actual_duration
     remaining_quota = max(0, MAX_BREAK_MINUTES - USER_BREAK_USED[uid])
-
     context.user_data.pop('break_duration', None)
     break_timers.pop(uid, None)
     break_active.discard(uid)
     break_notified.discard(uid)
-
     if USER_BREAK_USED[uid] > MAX_BREAK_MINUTES:
-        notify_txt = f"🚨 Ο @{user_names.get(uid, 'user')} ξεπέρασε το όριο των {MAX_BREAK_MINUTES} λεπτών διαλείμματος\\!\n" \
-                     f"Παρακαλώ έλεγχος από @mikekrp ή @Tsaqiris"
-        group_id = break_group_chat_ids.get(uid)
-        if group_id:
-            await context.bot.send_message(chat_id=group_id, text=notify_txt)
-        return await update.message.reply_text("🚫 Έχεις εξαντλήσει τα λεπτά διαλείμματος και θα γίνει έλεγχος.")
-    else:
-        return await update.message.reply_text(
-            f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ."
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text="🚫 Έχεις εξαντλήσει τα λεπτά διαλείμματος και θα γίνει έλεγχος.",
+            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
         )
-
+    else:
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text=f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ.",
+            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
+        )
 
 # --- Break end notification job ---
 async def end_break(context: ContextTypes.DEFAULT_TYPE):
@@ -1833,55 +1946,549 @@ sent_reminders = set()  # keep track of (date_str, model, chatter_name)
 sent_late_reminders = set()  # keep track of late alerts (date, model, chatter_name)
 
 async def shift_reminder_checker(app):
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, time
     while True:
         try:
             rows = fetch_sheet_values()
             if rows and len(rows) > 1:
                 days = rows[0][1:]
+                # determine today's column index
                 today_idx = datetime.now(TZ).weekday()
                 if 0 <= today_idx < len(days):
+                    # for each row (model schedule)
                     for row in rows[1:]:
                         model = row[0].strip()
                         cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
                         if not cell:
                             continue
+                        # split lines for morning/afternoon
                         lines = [p.strip() for p in cell.splitlines() if p.strip()]
                         for entry in lines:
+                            # parse time and chatter
                             parts = entry.split()
-                            time_range = parts[0]
+                            time_range = parts[0]  # e.g. "12:00-20:00" or "12:00-20:00"
+                            # normalize with hyphen
                             if '-' not in time_range and len(parts) >= 2 and ':' in parts[1]:
                                 time_range = time_range + '-' + parts[1]
                                 chatter_name = parts[2] if len(parts) > 2 else ""
                             else:
                                 chatter_name = parts[-1]
                             start_str = time_range.split('-')[0]
-                            start_dt = TZ.localize(datetime.combine(datetime.now(TZ).date(),
-                                                 datetime.strptime(start_str, "%H:%M").time()))
+                            start_dt = TZ.localize(datetime.combine(datetime.now(TZ).date(), datetime.strptime(start_str, "%H:%M").time()))
                             remind_dt = start_dt - timedelta(minutes=30)
                             now = datetime.now(TZ)
+                            # if it's time to send reminder (within the last minute) and not sent already
                             key = (now.date().isoformat(), model, chatter_name)
                             if remind_dt <= now < remind_dt + timedelta(minutes=1) and key not in sent_reminders:
                                 sent_reminders.add(key)
+                                # lookup handle
                                 handle = CHATTER_HANDLES.get(chatter_name, "")
+                                # send DM if chatter has a known Telegram ID
                                 if handle:
                                     username = handle.lstrip("@").lower()
                                     user_id = KNOWN_USERS.get(username)
                                     if user_id:
                                         try:
-                                            ack_callback = f"ack_reminder_{model}_{now.date().isoformat()}"
                                             keyboard = InlineKeyboardMarkup([[
-                                                InlineKeyboardButton("👍 Το είδα", callback_data=ack_callback)
+                                                InlineKeyboardButton("👍 Το είδα", callback_data=f"ack_{model}_{now.date().isoformat()}")
                                             ]])
                                             msg = await app.bot.send_message(
                                                 chat_id=user_id,
-                                                text=f"🔔 Υπενθύμιση: Σε 30' ξεκινά βάρδια για το μοντέλο {model}.",
+                                                text=f"⏰ Υπενθύμιση: Η βάρδιά σου στο μοντέλο <b>{model}</b> ξεκινά στις {start_str}.",
+                                                parse_mode="HTML",
                                                 reply_markup=keyboard
                                             )
-                                            pending_acks[msg.message_id] = (user_id, GROUP_CHAT_ID, model, handle)
-                                            asyncio.create_task(check_ack(app, user_id, msg.message_id, model, handle))
-                                        except Exception as e:
-                                            logger.error(f"Error sending shift reminder to {user_id}: {e}")
+                                            # Ensure group_chat_id is set from bot_data
+                                            group_chat_id = app.bot_data.get('notify_chat_id')
+                                            # store pending ack for later check
+                                            pending_acks[msg.message_id] = (user_id, group_chat_id, model, handle)
+                                            # schedule a late-check task
+                                            asyncio.create_task(check_ack(msg.chat_id, msg.message_id, model, handle))
+                                        except Exception:
+                                            pass
+
+                            # Late start alerts: 15 minutes past start if not started
+                            late_dt = start_dt + timedelta(minutes=15)
+                            late_key = (now.date().isoformat(), model, chatter_name)
+                            # Check if late, not already alerted, and user hasn't started (mode off)
+                            if now >= late_dt and late_key not in sent_late_reminders:
+                                sent_late_reminders.add(late_key)
+                                # Determine shift type
+                                shift_type = "πρωινή" if start_dt.time() < time(hour=18) else "απογευματινή"
+                                # Lookup Telegram handle
+                                handle = CHATTER_HANDLES.get(chatter_name, "")
+                                group_chat_id = app.bot_data.get('notify_chat_id')
+                                if group_chat_id and handle:
+                                    await app.bot.send_message(
+                                        chat_id=group_chat_id,
+                                        text=f"🔔 {handle} άργησε στην {shift_type} του βάρδια!"
+                                    )
         except Exception as e:
-            logger.error(f"shift_reminder_checker error: {e}")
+            logger.error(f"Error in shift_reminder_checker: {e}")
+        await asyncio.sleep(10)
+
+# Shift reminder acknowledgment check coroutine
+async def check_ack(app, chat_id, message_id, model, handle):
+    await asyncio.sleep(120)
+    if message_id in pending_acks:
+        group_chat_id = app.bot_data.get('notify_chat_id')
+        # notify the chatter directly
+        try:
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔔 Δεν πάτησες \"Το είδα\" για το μοντέλο {model}. Παρακαλώ απάντησε asap."
+            )
+        except Exception as e:
+            logger.error(f"Error notifying user late ack: {e}")
+
+        # notify each admin
+        for admin in ALLOWED_APPROVERS:
+            admin_id = KNOWN_USERS.get(admin)
+            if admin_id:
+                try:
+                    await app.bot.send_message(
+                        chat_id=admin_id,
+                        text=f"⚠️ O {handle} δεν πάτησε \"Το είδα\" για το μοντέλο {model} μέσα στα 2ʼ."
+                    )
+                except Exception as e:
+                    logger.error(f"Error notifying admin {admin} on late ack: {e}")
+
+
+# === Scheduled weekly report job ===
+async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
+    from datetime import datetime, timedelta
+    admin_chat_id = context.application.bot_data.get('notify_chat_id')
+    if not admin_chat_id:
+        return
+    now = datetime.now(TZ)
+    week_ago = now - timedelta(days=7)
+    c.execute(
+        "SELECT user_id, start_time FROM shifts WHERE start_time BETWEEN ? AND ?",
+        (week_ago.isoformat(), now.isoformat())
+    )
+    rows = c.fetchall()
+    report = "📊 Εβδομαδιαία αναφορά βαρδιών:\n"
+    durations = {}
+    for user_id, start_iso in rows:
+        try:
+            start = datetime.fromisoformat(start_iso)
+        except:
+            continue
+        delta = now - start
+        durations.setdefault(user_id, timedelta()).__iadd__(delta)
+    for uid, total in durations.items():
+        h = total.seconds // 3600
+        m = (total.seconds % 3600) // 60
+        username = user_names.get(int(uid), f"id_{uid}")
+        report += f"- @{username}: {h}h {m}m\n"
+    await context.bot.send_message(admin_chat_id, report)
+
+
+# === Weekly report subsystem ===
+async def weekly_report_checker(app):
+    from datetime import datetime, timedelta
+    admin_chat_id = app.bot_data.get('notify_chat_id')
+    if not admin_chat_id:
+        return
+    while True:
+        now = datetime.now(TZ)
+        # run every Monday at 09:00
+        if now.weekday() == 0 and now.hour == 9 and now.minute == 0:
+            # calculate one week ago
+            week_ago = now - timedelta(days=7)
+            c.execute("""
+                SELECT user_id, mode, start_time
+                FROM shifts
+                WHERE start_time BETWEEN ? AND ?
+            """, (week_ago.isoformat(), now.isoformat()))
+            rows = c.fetchall()
+            report = "📊 Εβδομαδιαία αναφορά βαρδιών:\n"
+            # aggregate durations per user
+            durations = {}
+            for user_id, mode, start_iso in rows:
+                # parse start_time
+                start = datetime.fromisoformat(start_iso)
+                end = now  # for simplicity, approximate
+                delta = now - start
+                durations.setdefault(user_id, timedelta()).__iadd__(delta)
+            for uid, total in durations.items():
+                h = total.seconds // 3600
+                m = (total.seconds % 3600) // 60
+                username = user_names.get(int(uid), f"id_{uid}")
+                report += f"- @{username}: {h}h {m}m\n"
+            await app.bot.send_message(admin_chat_id, report)
         await asyncio.sleep(60)
+
+
+
+
+# === MAIN ===
+
+async def populate_user_list(application):
+    updates = await application.bot.get_updates()
+    users = {u.message.from_user.id: u.message.from_user for u in updates if u.message}
+    application.bot_data["user_list"] = list(users.values())
+
+async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    # only allow admins to restart
+    if user.username not in ALLOWED_APPROVERS:
+        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα να κάνετε επανεκκίνηση.")
+    await update.message.reply_text("♻️ Επανεκκίνηση bot...")
+    # re-exec the current python process
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+async def handle_chatters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        rows = fetch_sheet_values()
+    except Exception as e:
+        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Σφάλμα κατά την ανάκτηση του sheet.")
+    if not rows or len(rows) < 2:
+        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Δεν βρέθηκαν δεδομένα στο sheet.")
+    # Collect unique chatter names from all shift cells
+    names = set()
+    # Skip header row
+    for row in rows[1:]:
+        for cell in row[1:]:
+            cell_text = cell.strip()
+            if not cell_text:
+                continue
+            # Split into lines for morning/afternoon
+            parts = [p.strip() for p in cell_text.splitlines() if p.strip()]
+            for part in parts:
+                # Extract name after the time range
+                m = re.match(r'.*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*(.+)$', part)
+                if m:
+                    names.add(m.group(1))
+                else:
+                    names.add(part)
+    # Canonicalize names after collecting
+    canonical_map = {
+        "Karapantsos": "Καραπάντσος",
+        "Καραπάντσος": "Καραπάντσος",
+        "Macro": "Μακρο",
+        "Μακρο": "Μακρο",
+        "Nίκος": "Νίκος",
+        "Νίκος": "Νίκος",
+        "Βασίλης": "Βασιλης",
+        "Βασιλης": "Βασιλης"
+    }
+    names = {canonical_map.get(name, name) for name in names}
+    # Manually include Βασίλης if mentioned
+    names.add("Βασιλης")
+    if not names:
+        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Δεν βρέθηκαν chatters.")
+    sorted_names = sorted(names)
+    lines = []
+    for idx, name in enumerate(sorted_names, start=1):
+        handle = CHATTER_HANDLES.get(name, "")
+        if handle:
+            lines.append(f"{idx}. {name} - {handle}")
+        else:
+            lines.append(f"{idx}. {name}")
+    message = f"📋 Συνολικά chatters: {len(sorted_names)}\n\t" + "\n\t".join(lines)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+
+
+async def handle_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 Η εβδομαδιαία αναφορά θα σταλεί στο admin την επόμενη Δευτέρα στις 09:00.")
+
+
+# --- /admin_schedule handler ---
+async def handle_admin_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # only allow admins
+    if update.effective_user.username not in ALLOWED_APPROVERS:
+        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα σε αυτή την εντολή.")
+    try:
+        rows = fetch_sheet_values()
+    except Exception:
+        return await update.message.reply_text("❌ Σφάλμα κατά την ανάκτηση του προγράμματος.")
+    if not rows or len(rows) < 2:
+        return await update.message.reply_text("❌ Δεν βρέθηκαν δεδομένα.")
+    # Build today's schedule
+    days = rows[0][1:]
+    today_idx = datetime.now(TZ).weekday()
+    if today_idx < 0 or today_idx >= len(days):
+        return await update.message.reply_text("❌ Σφάλμα ημέρας.")
+    day_name = days[today_idx]
+    lines = [f"📋 Πρόγραμμα για σήμερα ({day_name}):"]
+    for row in rows[1:]:
+        model = row[0].strip()
+        cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
+        if cell:
+            lines.append(f"- {model}: {cell.replace(chr(10), ' | ')}")
+    message = "\n".join(lines)
+    # Send to each admin
+    for admin in ("mikekrp", "tsaqiris"):
+        admin_id = KNOWN_USERS.get(admin)
+        if admin_id:
+            await context.bot.send_message(chat_id=admin_id, text=message)
+    await update.message.reply_text("✅ Το πρόγραμμα στάλθηκε στους admins.")
+
+# === --- ===  FLOW  /makeprogram  === --- ===
+# Απαιτεί τα helper: safe_send, safe_delete  +  consts: DAYS, ALLOWED_APPROVERS, KNOWN_USERS, TZ
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from datetime import datetime
+
+# ── /makeprogram ───────────────────────────────────────────
+async def mp_start(update: Update, context):
+    """/makeprogram – ξεκινά ο χρήστης το πλάνο 7 ημερών."""
+    uid = update.effective_user.id
+    context.user_data.clear()
+    context.user_data.update({
+        "step": 0,              # 0: pick day, 1: pick type, 2: pick start, 3: pick end, 99: preview
+        "program": {},          # day → {shift_type, hours}
+    })
+    await safe_send(context.bot, uid, "📅 Ξεκίνα επιλέγοντας ημέρα:", reply_markup=_mp_days_kb(context))
+
+# ── callback handler ──────────────────────────────────────
+async def mp_cb(update: Update, context):
+    q, uid = update.callback_query, update.effective_user.id
+    await q.answer()
+    data = q.data
+    step = context.user_data.get("step", 0)
+
+    # -------- ΠΙΣΩ από Preview ----------
+    if data == "mp_back" and step == 99:
+        context.user_data["step"] = 0
+        await safe_send(context.bot, uid, "📅 Συνέχισε επεξεργασία:", reply_markup=_mp_days_kb(context))
+        return
+
+    # -------- Επιλογή ημέρας ------------
+    if data.startswith("mp_day_") and step == 0:
+        idx = int(data.split("_")[2]); day = DAYS[idx]
+        if context.user_data["program"].get(day, {}).get("confirmed"):
+            return await q.answer("Η μέρα έχει κλειδώσει.")
+        context.user_data.update(step=1, current_day=day)
+        # build type keyboard
+        dayoff_cnt = sum(1 for e in context.user_data["program"].values() if e["shift_type"]=="dayoff")
+        kb = [
+            [InlineKeyboardButton("Πρωινή",      callback_data="mp_type_morning")],
+            [InlineKeyboardButton("Απογευματινή", callback_data="mp_type_afternoon")]
+        ]
+        if dayoff_cnt < 2:
+            kb.append([InlineKeyboardButton("Ρεπό", callback_data="mp_type_dayoff")])
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, f"🗓 {day} – διάλεξε βάρδια:", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    # -------- Ρεπό -----------------------
+    if data == "mp_type_dayoff" and step == 1:
+        day = context.user_data["current_day"]
+        context.user_data["program"][day] = {"shift_type":"dayoff","hours":"—","confirmed":True}
+        context.user_data["step"] = 0
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, f"✅ {day} — Ρεπό καταχωρήθηκε.")
+        await safe_send(context.bot, uid, "📅 Συνέχισε:", reply_markup=_mp_days_kb(context))
+        return
+
+    # -------- Πρωινή / Απογ. βάρδια ------
+    if data.startswith("mp_type_") and step == 1:
+        stype = data.split("_")[2]          # morning / afternoon
+        day   = context.user_data["current_day"]
+        context.user_data["program"][day] = {"shift_type": stype}
+        context.user_data["step"] = 2
+        starts = range(11,15) if stype=="morning" else range(19,24)
+        kb = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"mp_start_{h}")] for h in starts]
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, f"🕑 {day} – ώρα ΕΝΑΡΞΗΣ:",
+                        reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    # -------- Επιλογή ώρας έναρξης -------
+    if data.startswith("mp_start_") and step == 2:
+        sh   = int(data.split("_")[2])
+        day  = context.user_data["current_day"]
+        stype= context.user_data["program"][day]["shift_type"]
+        context.user_data["program"][day]["start"] = sh
+        context.user_data["step"] = 3
+        ends = (range(sh+1,16) if stype=="morning" else range(sh+1,24)) or [sh+1]
+        kb = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"mp_end_{h}")] for h in ends]
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, f"🕛 {day} – ώρα ΛΗΞΗΣ:",
+                        reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    # -------- Επιλογή ώρας λήξης ---------
+    if data.startswith("mp_end_") and step == 3:
+        eh  = int(data.split("_")[2])
+        day = context.user_data["current_day"]
+        sh  = context.user_data["program"][day]["start"]
+        context.user_data["program"][day].update(hours=f"{sh:02d}:00-{eh:02d}:00", confirmed=True)
+        context.user_data["step"] = 0
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, f"✅ {day} — {context.user_data['program'][day]['hours']}")
+        await safe_send(context.bot, uid, "📅 Συνέχισε:",
+                        reply_markup=_mp_days_kb(context))
+        return
+
+    # -------- Προεπισκόπηση --------------
+    if data == "mp_preview":
+        context.user_data["step"] = 99
+        summary = "\n".join(
+            f"{d}: {e['shift_type']} {e['hours']}" if (e:=context.user_data['program'].get(d)) else f"{d}: –"
+            for d in DAYS
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Πίσω", callback_data="mp_back")]])
+        await safe_send(context.bot, uid, f"📋 Προεπισκόπηση:\n\n{summary}", reply_markup=kb)
+        return
+
+    # -------- Τέλος -> αποστολή ----------
+    if data == "mp_send":
+        prog = context.user_data["program"]
+        if len([d for d in prog if prog[d].get("confirmed")]) < 7:
+            return await q.answer("Συμπλήρωσε και τις 7 ημέρες!", show_alert=True)
+
+        lines = [f"<b>{d}</b>: {e['shift_type']} {e['hours']}" for d,e in prog.items()]
+        username = update.effective_user.username or "user"
+        today = datetime.now(TZ).strftime("%d/%m/%Y")
+        report = f"📨 Πρόγραμμα @{username} ({today})\n\n" + "\n".join(lines)
+        for adm in ALLOWED_APPROVERS:
+            aid = KNOWN_USERS.get(adm)
+            if aid:
+                await safe_send(context.bot, aid, report, parse_mode="HTML")
+        context.user_data.clear()
+        await safe_delete(q.message)
+        await safe_send(context.bot, uid, "✅ Το πρόγραμμα στάλθηκε στους admins.")
+        return
+
+# ── helper: inline keyboard με τις 7 ημέρες + action buttons ──
+def _mp_days_kb(ctx):
+    prog = ctx.user_data.get("program", {})
+    kb = [
+        [InlineKeyboardButton("🆗 Τέλος, στείλτο", callback_data="mp_send")],
+        [InlineKeyboardButton("🔍 Προεπισκόπηση", callback_data="mp_preview")]
+    ]
+    for i,d in enumerate(DAYS):
+        lbl = f"🟢 {d}" if d in prog and prog[d].get("confirmed") else d
+        kb.append([InlineKeyboardButton(lbl, callback_data=f"mp_day_{i}")])
+    return InlineKeyboardMarkup(kb)
+
+# ── text handler (αν θες manual ώρες)  -----------------------
+async def mp_text(update: Update, context):
+    if context.user_data.get("step") != "free":
+        return
+    day = context.user_data["current_day"]
+    context.user_data["program"][day].update(hours=update.message.text.strip(), confirmed=True)
+    context.user_data["step"] = 0
+    await safe_send(context.bot, update.effective_chat.id, f"✅ {day} – καταχωρήθηκε.")
+    await safe_send(context.bot, update.effective_chat.id, "📅 Συνέχισε:", reply_markup=_mp_days_kb(context))
+
+# ── add handlers στην εφαρμογή σου ───────────────────────────
+# application.add_handler(CommandHandler("makeprogram", mp_start))
+# application.add_handler(CallbackQueryHandler(mp_cb, pattern="^mp_"))
+# application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mp_text))
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+# --- /start handler ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Καλωσήρθες στο infloww bot!")
+
+async def main():
+    print("Ξεκίνησε η main() ✅")
+
+    # 1. Δημιουργία εφαρμογής ΠΡΙΝ από οτιδήποτε άλλο
+    application = Application.builder().token(TOKEN).build()
+
+    # 2. Background tasks
+    asyncio.create_task(shift_reminder_checker(application))
+
+    # 3. Προσθήκη όλων των handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("on", handle_on))
+    application.add_handler(CommandHandler("off", handle_off))
+    application.add_handler(CommandHandler("onprogram", handle_onprogram))
+    application.add_handler(CommandHandler("makeprogram", handle_makeprogram))
+    application.add_handler(CommandHandler("liveon", handle_liveon))
+    application.add_handler(CommandHandler("liveoff", handle_liveoff))
+    application.add_handler(CommandHandler("status", handle_status))
+    application.add_handler(CommandHandler("whoison", handle_whoison))
+    application.add_handler(CommandHandler("sendreport", handle_sendreport))
+    application.add_handler(CommandHandler("cancel", handle_cancel))
+    application.add_handler(CommandHandler("update", handle_update_data))
+    application.add_handler(CallbackQueryHandler(live_callback, pattern="^live"))
+    application.add_handler(CallbackQueryHandler(onprogram_callback, pattern="^onp_"))
+    application.add_handler(CallbackQueryHandler(confirmation_callback, pattern="^confirm_"))
+
+    # 4. Προγραμματισμένες εργασίες
+    application.job_queue.run_daily(send_weekly_report_job, time=time(hour=22, minute=0), days=[6])
+
+    # 5. Εκκίνηση bot
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    await application.updater.idle()
+
+if __name__ == "__main__":
+    from telegram.ext import Application
+
+    # 1) Φτιάχνουμε το app με το token
+    application = Application.builder().token(TOKEN).build()
+
+    # 2) Καταχωρούμε όλους τους handlers
+    application.add_handler(CommandHandler("getid", get_id))
+    application.add_handler(CommandHandler("register", handle_register))
+    application.add_handler(CommandHandler("start", handle_start))
+    application.add_handler(CommandHandler("on", handle_on))
+    application.add_handler(CommandHandler("off", handle_off))
+    application.add_handler(CommandHandler("onall", handle_onall))
+    application.add_handler(CommandHandler("offall", handle_offall))
+    application.add_handler(CommandHandler("status", handle_status))
+    application.add_handler(CommandHandler("give", handle_give))
+    application.add_handler(CommandHandler("mistake_on", handle_mistake_on))
+    application.add_handler(CommandHandler("mistake_off", handle_mistake_off))
+    application.add_handler(CommandHandler("mistake_status", handle_mistake_status))
+    application.add_handler(CommandHandler("live", handle_live))
+    application.add_handler(CommandHandler("liveoff", handle_liveoff))
+    application.add_handler(CommandHandler("active", handle_active))
+    application.add_handler(CommandHandler("remaining", handle_remaining))
+    application.add_handler(CommandHandler("break", handle_break))
+    application.add_handler(CommandHandler("back", handle_back))
+    application.add_handler(CommandHandler("break_balance", handle_break_balance))
+    application.add_handler(CommandHandler("show_program", handle_show_program))
+    application.add_handler(CommandHandler("weekly_program", handle_weekly_program))
+    application.add_handler(CommandHandler("myprogram", handle_myprogram))
+    application.add_handler(CommandHandler("onprogram", handle_onprogram))
+    application.add_handler(CommandHandler("help", handle_help))
+    application.add_handler(CommandHandler("chatters", handle_chatters))
+    application.add_handler(CommandHandler("admin_schedule", handle_admin_schedule))
+    application.add_handler(CommandHandler("weekly_report", handle_weekly_report)) 
+    application.add_handler(CommandHandler("makeprogram", handle_makeprogram_start))
+    application.add_handler(CallbackQueryHandler(handle_makeprogram_day, pattern="^mp_"))
+    application.add_handler(CallbackQueryHandler(common_button_handler))
+    # Για το custom-break input
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_break_choice))
+
+    # 3) Τέλος, “τρέχουμε” το bot
+    application.run_polling()
+# --- ENTRY POINT ---
+if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.run(main())  
+
+    
+async def notify_break_end(context: ContextTypes.DEFAULT_TYPE):
+    uid = context.job.data["uid"]
+    await context.bot.send_message(chat_id=uid, text="🔔 Το διάλειμμά σου έληξε. Μπορείς να επιστρέψεις!")
+# === Break End Notification ===
+from telegram.ext import CallbackContext
+
+async def schedule_break_end_notification(context: CallbackContext):
+    uid = context.job.data["uid"]
+    await context.bot.send_message(
+        chat_id=uid,
+        text="🔔 Το διάλειμμα σου τελείωσε. Επιστροφή!"
+    )
+# --- End of break notification ---
+async def end_break(context: ContextTypes.DEFAULT_TYPE):
+    uid = context.job.data["uid"]
+    try:
+        await context.bot.send_message(chat_id=uid, text="⏱️ Το διάλειμμά σου ολοκληρώθηκε.")
+    except Exception as e:
+        print(f"Failed to send break end message to {uid}: {e}")
