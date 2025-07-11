@@ -25,6 +25,7 @@ KNOWN_USERS = {
     "nikospapadop": 5864768017,
     "bull056": 5536090159,
     "riggersss": 1882063026,
+    "macraw99" : 5801982873, 
 }
 
 # === Chatter name → Telegram handle mappings ===
