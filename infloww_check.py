@@ -25,7 +25,10 @@ KNOWN_USERS = {
     "nikospapadop": 5864768017,
     "bull056": 5536090159,
     "riggersss": 1882063026,
-    "macraw99" : 5801982873, 
+    "macraw99": 5801982873, 
+    "basileiou": 1841008949,
+    "anastasiss12": 1781244068,
+    "kouzounias": 5032709982,
 }
 
 # === Chatter name → Telegram handle mappings ===
@@ -34,7 +37,7 @@ CHATTER_HANDLES = {
     "Ηλίας": "@elias_drag",
     "Καραπάντσος": "@mikekrp",
     "Κούζου": "@Kouzounias",
-    "Μακρο": None,        # TODO: συμπλήρωσε handle
+    "Μακρο": "@MacRaw99"
     "Μαραγγός": "@Maraggos",
     "Νίκος": "@nikospapadop",   
     "Πετρίδης": "@Bull056",
