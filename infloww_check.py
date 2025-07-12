@@ -37,7 +37,7 @@ CHATTER_HANDLES = {
     "Ηλίας": "@elias_drag",
     "Καραπάντσος": "@mikekrp",
     "Κούζου": "@Kouzounias",
-    "Μακρο": "@MacRaw99"
+    "Μακρο": "@MacRaw99",
     "Μαραγγός": "@Maraggos",
     "Νίκος": "@nikospapadop",   
     "Πετρίδης": "@Bull056",
@@ -1194,15 +1194,14 @@ async def handle_custom_break_choice(update: Update, context: ContextTypes.DEFAU
 async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
     print(f"[DEBUG] User {uid} triggered /on")
-    # Reset breaks only if the user was not on any model before (i.e. completely off)
-    if not user_status.get(uid):
+    prev_models = user_status.get(uid)
+    # Only if starting a new shift (no models before), reset breaks and record shift start time
+    if not prev_models:
         USER_BREAK[uid] = 45
         USER_BREAK_USED[uid] = 0
+        on_times[uid] = datetime.now(TZ)
     user_names[uid] = u.username
     user_mode[uid]  = "on"
-    on_times[uid]   = datetime.now(TZ)
-    user_status.setdefault(uid, set())
-    # Ensure the user_status entry exists before copying previous_models
     user_status.setdefault(uid, set())
     previous_models = user_status[uid].copy()
     context.application.bot_data.setdefault("previous_models_map", {})[uid] = previous_models
