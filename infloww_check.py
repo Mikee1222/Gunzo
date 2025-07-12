@@ -1726,7 +1726,6 @@ async def handle_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- /notify handler ---
 async def handle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
     uid     = update.effective_user.id
 
     buttons = []
@@ -1839,9 +1838,10 @@ async def handle_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     now = datetime.now(TZ)
     active_items = []
-    for uid, mods in user_status.items():
-        if user_mode.get(uid) == "on":
+    for uid, mode in user_mode.items():
+        if mode == "on":
             username = user_names.get(uid, 'user')
+            mods = user_status.get(uid, set())
             mods_text = ', '.join(mods) or 'κανένα'
             st = on_times.get(uid)
             dur_text = ''
