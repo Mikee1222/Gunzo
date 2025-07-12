@@ -11,6 +11,7 @@ MYPROGRAM_REPLY_TO_MESSAGE_ID = 25515  # reply-to message number for /myprogram 
 
 ACTIVE_REPLY_TO_MESSAGE_ID = 25631  # reply-to message number for /active in the target channel
 STATUS_REPLY_TO_MESSAGE_ID = 25654  # reply to message number for /status in target channel
+NOTIFY_REPLY_TO_MESSAGE_ID = 26232  # reply-to message number for /notify in target channel
 
 # === Greek day names constant ===
 DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
@@ -185,6 +186,11 @@ mistake_on_times  = {}
 message_owner     = {}   # (chat_id, msg_id) -> uid
 give_target       = {}   # (chat_id, msg_id) -> target_username
 give_selected     = {}   # (chat_id, msg_id) -> set(models)
+# Notify subsystem state
+notify_selected = {}  # (chat_id, msg_id) -> set(usernames)
+notify_models_selected = {}  # (chat_id, msg_id) -> (set(usernames), set(models))
+# Mapping for pending notify accept/reject callbacks
+notify_confirm_flow = {}  # (chat_id, msg_id) -> (initiator_uid, target_uname, set(models))
 
 # Live subsystem state
 LIVE_SELECTED = {}  # (chat_id, message_id) -> set(models)
@@ -456,73 +462,28 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             )
             # Δεν επαναπροβάλουμε το inline keyboard με όλα τα μοντέλα
             return
-        elif sel.startswith("liveoff_model_"):
-            model_name = sel.replace("liveoff_model_", "")
-            # Notify the chatter privately with an acknowledgment button
-            owner = None
-            for uid_, mods in user_status.items():
-                if model_name in mods:
-                    owner = uid_
-                    break
-            if owner:
+        elif mode == "off":
+            # Toggle selection of models to stop live
+            selset = LIVE_SELECTED[lm_key]
+            if sel != "OK":
+                selset.symmetric_difference_update({sel})
+                # rebuild keyboard showing only currently live models
+                # filtered_models is in scope from earlier
+                live_models = [m for m in filtered_models]
                 try:
-                    text = f"✖️ Το μοντέλο <b>{model_name}</b> σταμάτησε το live."
-                    ack_callback = f"ack_live_off_{model_name}_{datetime.now(TZ).date().isoformat()}"
-                    keyboard = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("👍 Το είδα", callback_data=ack_callback)
-                    ]])
-                    msg = await context.bot.send_message(
-                        chat_id=owner,
-                        text=text,
-                        parse_mode="HTML",
-                        reply_markup=keyboard
-                    )
-                    handle = f"@{user_names.get(owner, '')}"
-                    group_chat_id = context.application.bot_data.get('notify_chat_id')
-                    pending_acks[msg.message_id] = (owner, group_chat_id, model_name, handle)
-                    asyncio.create_task(check_ack(context.application, owner, msg.message_id, model_name, handle))
+                    return await q.message.edit_reply_markup(reply_markup=build_keyboard(live_models, selset))
                 except Exception:
-                    pass
-            # Do not delete the inline message here; wait for OK confirmation
-            return
-        elif sel.startswith("liveoff_model_"):
-            model_name = sel.replace("liveoff_model_", "")
-            # Μόλις επιλεχθεί ένα μοντέλο, στείλε προσωπικό μήνυμα στον chatter του μοντέλου με κουμπί "Το είδα" και σταμάτα εδώ
-            owner = None
-            for uid_, mods in user_status.items():
-                if model_name in mods:
-                    owner = uid_
-                    break
-            if owner:
-                text = f"✖️ Το μοντέλο <b>{model_name}</b> σταμάτησε το live."
-                try:
-                    ack_callback = f"ack_live_off_{model_name}_{datetime.now(TZ).date().isoformat()}"
-                    keyboard = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("👍 Το είδα", callback_data=ack_callback)
-                    ]])
-                    msg = await context.bot.send_message(
-                        chat_id=owner,
-                        text=text,
-                        parse_mode="HTML",
-                        reply_markup=keyboard
-                    )
-                    handle = f"@{user_names.get(owner, '')}"
-                    group_chat_id = context.application.bot_data.get('notify_chat_id')
-                    pending_acks[msg.message_id] = (owner, group_chat_id, model_name, handle)
-                    asyncio.create_task(check_ack(context.application, owner, msg.message_id, model_name, handle))
-                except Exception:
-                    pass
+                    return
+            # OK pressed: apply live-off to selected models
             await q.message.delete()
-            # Notify the group chat that the model stopped live
-            try:
+            for model_name in selset:
+                # stop live for each selected model
+                # notify group chat
                 await context.bot.send_message(
                     chat_id=GROUP_CHAT_ID,
                     text=f"✖️ Το μοντέλο <b>{model_name}</b> σταμάτησε το live.",
                     parse_mode="HTML"
                 )
-            except tg_error.BadRequest as e:
-                logger.error(f"Live notify failed for group {GROUP_CHAT_ID}: {e}")
-            # Δεν επαναπροβάλουμε το inline keyboard με όλα τα μοντέλα
             return
         # Only show the inline keyboard for model selection on first call, not after confirmation
         if sel != "OK":
@@ -581,6 +542,255 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         del LIVE_MODE[lm_key]
         del LIVE_SELECTED[lm_key]
         return
+    # --- Notify subsystem inline handling: step 1 – select users ---
+    if key in notify_selected:
+        if sel.startswith("notify_") and sel not in ("notify_OK", "notify_cancel"):
+            users = {sel.replace("notify_", "")}
+            await q.message.delete()
+            # determine all models the selected user currently has
+            allowed_models = set()
+            for uname in users:
+                uid2 = KNOWN_USERS.get(uname.lower())
+                if uid2:
+                    allowed_models.update(user_status.get(uid2, set()))
+            # if user has no models, inform that their shift has ended
+            if not allowed_models:
+                return await q.answer(
+                    "❌ Ο χρήστης δεν έχει κανένα μοντέλο σε βάρδια (η βάρδιά του έχει τελειώσει).",
+                    show_alert=True
+                )
+            # build and send model-selection keyboard
+            model_list = sorted(allowed_models)
+            model_buttons = [InlineKeyboardButton(m, callback_data=f"notifym_{m}") for m in model_list]
+            model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
+            model_rows.append([
+                InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
+                InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
+            ])
+            msg2 = await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
+                text="🔔 Επιλέξτε μοντέλα για την ειδοποίηση:",
+                reply_markup=InlineKeyboardMarkup(model_rows)
+            )
+            message_owner[(msg2.chat.id, msg2.message_id)] = uid
+            notify_models_selected[(msg2.chat.id, msg2.message_id)] = (users, set())
+            return
+        if sel == "notify_cancel":
+            ...
+        if sel == "notify_OK":
+            # proceed to model selection
+            users = notify_selected.pop(key, set())
+            await q.message.delete()
+            # προσδιορισμός όλων των μοντέλων που έχει ο επιλεγμένος χρήστης
+            allowed_models = set()
+            for uname in users:
+                uid2 = KNOWN_USERS.get(uname.lower())
+                if uid2:
+                    allowed_models.update(user_status.get(uid2, set()))
+            # αν δεν έχει μοντέλα, η βάρδιά του έχει τελειώσει
+            if not allowed_models:
+                return await q.answer(
+                    "❌ Ο χρήστης δεν έχει κανένα μοντέλο σε βάρδια (η βάρδιά του έχει τελειώσει).",
+                    show_alert=True
+                )
+            model_list = sorted(allowed_models)
+            model_buttons = [InlineKeyboardButton(m, callback_data=f"notifym_{m}") for m in model_list]
+            model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
+            model_rows.append([
+                InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
+                InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
+            ])
+            msg2 = await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
+                text="🔔 Επιλέξτε μοντέλα για την ειδοποίηση:",
+                reply_markup=InlineKeyboardMarkup(model_rows)
+            )
+            message_owner[(msg2.chat.id, msg2.message_id)] = uid
+            notify_models_selected[(msg2.chat.id, msg2.message_id)] = (users, set())
+            return
+            # Prevent selecting users who are not in shift
+        if sel not in ("notify_cancel", "notify_OK"):
+            uname = sel.replace("notify_", "")
+            uid2 = KNOWN_USERS.get(uname)
+            if uid2 is None:
+                return await q.answer("❌ Ο χρήστης δεν βρέθηκε.", show_alert=True)
+            if user_mode.get(uid2) != "on":
+                return await q.answer("❌ Ο χρήστης δεν έχει ενεργή βάρδια.", show_alert=True)
+        # toggle user selection
+        user_set = notify_selected[key]
+        uname = sel.replace("notify_", "")
+        if uname in user_set:
+            user_set.remove(uname)
+        else:
+            user_set.add(uname)
+        # rebuild user-selection keyboard
+        user_buttons = []
+        for name, handle in CHATTER_HANDLES.items():
+            keyu = handle.lstrip("@")
+            text = f"✅ {name}" if keyu in user_set else name
+            user_buttons.append(InlineKeyboardButton(text, callback_data=f"notify_{keyu}"))
+        user_rows = [user_buttons[i:i+3] for i in range(0, len(user_buttons), 3)]
+        user_rows.append([
+            InlineKeyboardButton("✅ OK", callback_data="notify_OK"),
+            InlineKeyboardButton("❌ Cancel", callback_data="notify_cancel"),
+        ])
+        return await q.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(user_rows))
+
+    # --- Notify subsystem inline handling: step 2 – select models ---
+    if key in notify_models_selected:
+        users, model_set = notify_models_selected[key]
+        if sel == "notifym_cancel":
+            notify_models_selected.pop(key, None)
+            return await q.message.edit_text("❌ Ειδοποίηση ακυρώθηκε.")
+        if sel == "notifym_OK":
+            notify_models_selected.pop(key, None)
+            await q.message.delete()
+            mentions = ", ".join(f"@{u}" for u in users)
+            # send interactive DMs to each user
+            for uname in users:
+                uid2 = KNOWN_USERS.get(uname.lower())
+                if uid2 and model_set:
+                    try:
+                        keyboard = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("✅ Αποδοχή", callback_data=f"notify_accept_{uname}"),
+                            InlineKeyboardButton("❌ Απόρριψη", callback_data=f"notify_reject_{uname}")
+                        ]])
+                        dm_msg = await context.bot.send_message(
+                            chat_id=uid2,
+                            text=f"🔔 Ο χρήστης @{update.effective_user.username} θέλει να βγείτε από τα μοντέλα: {', '.join(model_set)}",
+                            reply_markup=keyboard
+                        )
+                        notify_confirm_flow[(dm_msg.chat.id, dm_msg.message_id)] = (update.effective_user.id, uname, model_set)
+                    except Exception:
+                        pass
+            return await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
+                text=f"🛎 Εστάλησαν ειδοποιήσεις σε {mentions} για μοντέλα: {', '.join(model_set)} από @{update.effective_user.username}"
+            )
+        # toggle model selection
+        mname = sel.replace("notifym_", "")
+        if mname in model_set:
+            model_set.remove(mname)
+        else:
+            model_set.add(mname)
+        # rebuild model-selection keyboard based on selected users' active models
+        allowed_models = set()
+        for uname in users:
+            uid2 = KNOWN_USERS.get(uname.lower())
+            if uid2 and user_mode.get(uid2) == "on":
+                allowed_models.update(user_status.get(uid2, set()))
+        sorted_models = sorted(allowed_models)
+        if not sorted_models:
+            # if no models available, notify and cancel
+            await q.answer("❌ Κανένα μοντέλο διαθέσιμο για τον επιλεγμένο χρήστη.", show_alert=True)
+            return
+        model_buttons = []
+        for m in sorted_models:
+            txt = f"✅ {m}" if m in model_set else m
+            model_buttons.append(InlineKeyboardButton(txt, callback_data=f"notifym_{m}"))
+        model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
+        model_rows.append([
+            InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
+            InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
+        ])
+        return await q.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(model_rows))
+
+    # --- Handle notify accept/reject callbacks ---
+    if sel.startswith("notify_accept_") or sel.startswith("notify_reject_"):
+        action, uname = sel.split("_", 1)[1].split("_", 1)
+        key2 = (q.message.chat.id, q.message.message_id)
+        info = notify_confirm_flow.pop(key2, None)
+        if not info:
+            return await q.answer("❌ Πληροφορία ειδοποίησης δεν βρέθηκε.", show_alert=True)
+        initiator_uid, target_uname, models = info
+        target_uid = q.from_user.id
+        expected_uid = KNOWN_USERS.get(target_uname.lower())
+        if target_uid != expected_uid:
+            return await q.answer("❌ Δεν είσαι ο σωστός παραλήπτης.", show_alert=True)
+        # Process acceptance
+        if action == "accept":
+            # Shift OFF models from target
+            removed = set(models)
+            user_status[target_uid].difference_update(removed)
+            if not user_status[target_uid]:
+                user_mode[target_uid] = "off"
+                on_times.pop(target_uid, None)
+            save_shift(target_uid)
+            # Shift ON models for initiator
+            user_status.setdefault(initiator_uid, set()).update(removed)
+            user_mode[initiator_uid] = "on"
+            if initiator_uid not in on_times:
+                on_times[initiator_uid] = datetime.now(TZ)
+            save_shift(initiator_uid)
+            # Send channel notifications
+            now = datetime.now(TZ)
+            # Duration calculations
+            d_off = now - on_times.get(target_uid, now)
+            h_off = d_off.seconds // 3600
+            m_off = (d_off.seconds % 3600) // 60
+            dur_off = f"{h_off}h {m_off}m"
+            d_on = now - on_times.get(initiator_uid)
+            h_on = d_on.seconds // 3600
+            m_on = (d_on.seconds % 3600) // 60
+            dur_on = f"{h_on}h {m_on}m" if h_on or m_on else "μόλις ξεκίνησε την βάρδια"
+
+            # OFF notification for target with remaining models
+            removed = set(models)
+            # compute remaining models
+            remaining_models = user_status.get(target_uid, set())
+            remaining_text = (
+                f"\n✅ Παραμένει σε: {', '.join(sorted(remaining_models))}"
+                if remaining_models else "\n🚩 Τελείωσε την βάρδιά του!"
+            )
+            off_text = (
+                f"🔴 Shift OFF by @{target_uname}\n"
+                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur_off}\n"
+                f"🗑 Αφαίρεσε: {', '.join(sorted(removed)) or 'καμία'}"
+                f"{remaining_text}"
+            )
+            await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+                text=off_text
+            )
+
+            # ON notification for initiator with full model list and new additions
+            all_models = user_status.get(initiator_uid, set())
+            prev_models = context.application.bot_data.setdefault("previous_models_map", {}).get(initiator_uid, set())
+            new_models = all_models - prev_models
+            new_text = (
+                f"\n➕ Νέα: {', '.join(sorted(new_models))}"
+                if new_models else ""
+            )
+            on_text = (
+                f"🔛 Shift ON by @{user_names.get(initiator_uid)}\n"
+                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur_on}\n"
+                f"Models: {', '.join(sorted(all_models)) or 'Δεν επελέγησαν μοντέλα'}"
+                f"{new_text}"
+            )
+            await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+                text=on_text
+            )
+            # update stored previous models
+            context.application.bot_data["previous_models_map"][initiator_uid] = set(all_models)
+
+            # Notify both users
+            await safe_send(context.bot, target_uid, f"✅ Τα μοντέλα {', '.join(sorted(removed))} αφαιρέθηκαν από τη βάρδιά σου.")
+            await safe_send(context.bot, initiator_uid, f"✅ Τα μοντέλα {', '.join(sorted(removed))} προστέθηκαν στη βάρδιά σου.")
+        else:
+            # Rejection: notify initiator
+            await safe_send(
+                context.bot,
+                initiator_uid,
+                f"❌ Ο @{target_uname} απέρριψε την ειδοποίηση για μοντέλα: {', '.join(models)}."
+            )
+        return
+
 
     # --- Mistake subsystem ---
     if mistake_mode.get(uid) in ("on", "off"):
@@ -758,7 +968,11 @@ async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             message_owner[(q.message.chat.id, q.message.message_id)] = uid
             used = USER_BREAK_USED.get(uid, 0)
             rem = MAX_BREAK_MINUTES - used
-            await context.bot.send_message(chat_id=chat.id, text=f"⌛️ Σου απομένουν {rem} λεπτά διαλείμματος.")
+            await context.bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID,
+                text=f"⌛️ Σου απομένουν {rem} λεπτά διαλείμματος."
+            )
             return res
         minutes = int(val)
         context.user_data['break_duration'] = minutes
@@ -1276,6 +1490,25 @@ async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     message_owner[(msg.chat.id, msg.message_id)] = uid
 
+# --- /say command: bot echoes whatever you write ---
+async def handle_say(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Delete the user’s original message
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    # Grab everything after the command
+    text = update.message.text.partition(' ')[2]
+    if not text:
+        return
+
+    # Send it as the bot
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text
+    )
+    
 # --- /offall handler ---
 async def handle_offall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -1307,6 +1540,12 @@ async def handle_offall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if user_mode.get(uid) != "on":
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
+            text="❌ Δεν είσαι σε βάρδια."
+        )
     sel = user_status.get(uid, set())
     if not sel:
         return await context.bot.send_message(
@@ -1327,6 +1566,9 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if user_mode.get(uid) != "on":
+        return await update.message.reply_text("❌ Δεν είσαι σε βάρδια.")
     # extract first token after command as mention if present, else fallback to reply_to_message
     parts = update.message.text.strip().split()
     if len(parts) >= 2 and parts[1].startswith('@'):
@@ -1343,7 +1585,6 @@ async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"❌ Δεν βρηκα τον @{target_username}.")
 
     # Filter models: only allow giving models the user owns
-    uid = update.effective_user.id
     owned_models = user_status.get(uid, set())
     if not owned_models:
         return await update.message.reply_text("❌ Δεν έχεις μοντέλα για να δώσεις.")
@@ -1482,6 +1723,46 @@ async def handle_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await context.bot.send_message(update.effective_chat.id, txt)
 
+
+    # --- /notify handler ---
+async def handle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    uid     = update.effective_user.id
+
+    buttons = []
+    for name, handle in CHATTER_HANDLES.items():
+        key = handle.lstrip("@")  # username χωρίς '@'
+        uid2 = KNOWN_USERS.get(key.lower())
+        # μόνο αν ο χρήστης είναι σε shift
+        if uid2 is None or user_mode.get(uid2) != "on":
+            continue
+        buttons.append(InlineKeyboardButton(name, callback_data=f"notify_{key}"))
+
+    if not buttons:
+        return await context.bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
+            text="❌ Δεν υπάρχει κανένας χρήστης σε βάρδια προς ειδοποίηση."
+        )
+
+    # chunk into rows of 3
+    rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
+    # add OK / Cancel
+    rows.append([
+        InlineKeyboardButton("✅ OK",     callback_data="notify_OK"),
+        InlineKeyboardButton("❌ Cancel", callback_data="notify_cancel"),
+    ])
+
+    msg = await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
+        text="🔔 Επιλέξτε χρήστες για ειδοποίηση:",
+        reply_markup=InlineKeyboardMarkup(rows)
+    )
+    # restrict to invoker
+    message_owner[(msg.chat.id, msg.message_id)] = uid
+    notify_selected[(msg.chat.id, msg.message_id)] = set()
+
 # --- /live handler ---
 async def handle_live(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # only allow admins to use /live
@@ -1515,7 +1796,15 @@ async def handle_liveoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("❌ Δεν έχετε δικαίωμα να χρησιμοποιήσετε αυτή την εντολή.")
     uid = update.effective_user.id
 
-    models = ["Lina", "Nina", "Frost", "Frika", "Barbie", "Sabrina", "Natalia"]
+    # Determine which models are currently live (i.e., in shift and allowed for live off)
+    allowed_live_models = ["Lina", "Nina", "Miss Frost", "Frika", "Iris", "Electra", "Barbie", "Sabrina", "Natalia"]
+    live_models = set()
+    for mods in user_status.values():
+        live_models.update(mods)
+    models = [m for m in allowed_live_models if m in live_models]
+    if not models:
+        return await update.message.reply_text("Δεν υπάρχει κανένα μοντέλο σε live αυτή τη στιγμή.")
+
     keyboard = []
     for m in models:
         keyboard.append([InlineKeyboardButton(m, callback_data=f"liveoff_model_{m}")])
@@ -2464,6 +2753,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("makeprogram", handle_makeprogram_start))
     application.add_handler(CallbackQueryHandler(handle_makeprogram_day, pattern="^mp_"))
     application.add_handler(CallbackQueryHandler(common_button_handler))
+    application.add_handler(CommandHandler("notify", handle_notify))
     # Για το custom-break input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_break_choice))
 
