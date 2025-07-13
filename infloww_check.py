@@ -1967,26 +1967,22 @@ async def handle_weekly_program(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="HTML"
         )
 
-# --- /myprogram handler ---
 async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     username = u.username or ""
     # Find chatter name by Telegram handle
     chatter_name = None
     for name, handle in CHATTER_HANDLES.items():
-        raw_handle = handle
-        if not raw_handle:
-            continue
-        if raw_handle.lstrip("@").lower() == username.lower():
+        if handle and handle.lstrip("@").lower() == username.lower():
             chatter_name = name
             break
     if not chatter_name:
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
             reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
+            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρήσει σωστά το handle σου."
         )
-    # Fetch sheet
+
     rows = fetch_sheet_values()
     if not rows or len(rows) < 2:
         return await context.bot.send_message(
@@ -1994,9 +1990,8 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
             text="❌ Δεν βρέθηκαν δεδομένα στο sheet."
         )
+
     days = rows[0][1:]
-    # Determine today's column index (0-based for days list)
-    from datetime import datetime
     today_idx = datetime.now(TZ).weekday()
     if today_idx < 0 or today_idx >= len(days):
         return await context.bot.send_message(
@@ -2004,55 +1999,43 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
             text="❌ Σφάλμα στον προσδιορισμό της ημέρας."
         )
-    day_name = days[today_idx]
-    # Collect assignments
+
+    # Collect assignments as tuples (model_name, entry_text)
     assignments = []
     for row in rows[1:]:
-        model = row[0].strip()
+        model_name = row[0].strip()
         cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
         if not cell:
             continue
         parts = [p.strip() for p in cell.splitlines() if p.strip()]
         for p in parts:
             if chatter_name in p:
-                assignments.append(f"{model}: {p}")
-    # Build a nicely formatted response
-    from datetime import datetime
-    # Header: today's day name
+                assignments.append((model_name, p))
+
+    # Build header
     header = datetime.now(TZ).strftime("📋 Πρόγραμμα για σήμερα (%A)")
-    # Include chatter name and handle
-    raw_handle = CHATTER_HANDLES.get(chatter_name)
-    if not raw_handle:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
-        )
-    handle = raw_handle.lstrip("@").lower()
-    if handle != username.lower():
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρημένο handle."
-        )
+    raw_handle = CHATTER_HANDLES.get(chatter_name, "")
     header += f"\nChatter: {chatter_name}"
     if raw_handle:
         header += f", {raw_handle}"
+
     # Prepare lines for each assignment
     lines = []
-    for entry in assignments:
-        # entry like "Model: HH:MM - HH:MM Name"
-        model, rest = entry.split(":", 1)
-        rest = rest.strip()
-        # Extract time range and ignore name
+    for model_name, entry in assignments:
+        entry = entry.strip()
+        # Extract time range anywhere in text
         import re
-        m = re.match(r"(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", rest)
-        time_range = m.group(1) if m else rest
-        # Determine shift type by starting hour
-        start_hour = int(time_range.split(":")[0])
+        m = re.search(r"(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", entry)
+        time_range = m.group(1) if m else entry
+        # Determine shift type
+        try:
+            start_hour = int(time_range.split(":")[0])
+        except ValueError:
+            continue
         shift_type = "πρωινή βάρδια" if start_hour < 18 else "απογευματινή βάρδια"
-        lines.append(f"{time_range}  {model} ({shift_type})")
-    # Combine and send
+        lines.append(f"{time_range}  {model_name} ({shift_type})")
+
+    # Send result
     message = header + "\n" + ("\n".join(lines) if lines else "– Δεν έχεις βάρδια.")
     await context.bot.send_message(
         chat_id=TARGET_CHAT_ID,
