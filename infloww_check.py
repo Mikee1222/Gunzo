@@ -34,16 +34,15 @@ KNOWN_USERS = {
 
 # === Chatter name → Telegram handle mappings ===
 CHATTER_HANDLES = {
-    "Αναστάσης": "@Anastasiss12",
+    "Anastasis": "@Anastasiss12",
     "Ηλίας": "@elias_drag",
-    "Καραπάντσος": "@mikekrp",
-    "Κούζου": "@Kouzounias",
+    "Mike": "@mikekrp",
+    "Kouzou": "@Kouzounias",
     "Μακρο": "@MacRaw99",
-    "Μαραγγός": "@Maraggos",
-    "Νίκος": "@nikospapadop",   
-    "Πετρίδης": "@Bull056",
+    "Maraggos": "@Maraggos",
+    "Nikos": "@nikospapadop",   
+    "Petridis": "@Bull056",
     "Riggers": "@riggersss",
-    "Βασίλης": "@basileiou",
 }
 
 import logging
