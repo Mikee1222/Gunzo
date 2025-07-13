@@ -2024,13 +2024,13 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for model_name, entry in assignments:
         entry = entry.strip()
         # Extract time range anywhere in text
-        import re
         m = re.search(r"(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", entry)
         time_range = m.group(1) if m else entry
         # Determine shift type
         try:
             start_hour = int(time_range.split(":")[0])
         except ValueError:
+            # Skip entries without a leading numeric hour
             continue
         shift_type = "πρωινή βάρδια" if start_hour < 18 else "απογευματινή βάρδια"
         lines.append(f"{time_range}  {model_name} ({shift_type})")
@@ -2505,6 +2505,7 @@ async def handle_admin_schedule(update: Update, context: ContextTypes.DEFAULT_TY
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from datetime import datetime
+import re
 
 # ── /makeprogram ───────────────────────────────────────────
 async def mp_start(update: Update, context):
