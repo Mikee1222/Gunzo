@@ -1466,6 +1466,7 @@ async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
     user_names[uid] = u.username
+    user_mode[uid] = "off"
     removed_map[uid] = set()
     if not user_status.get(uid, set()):
         return await context.bot.send_message(
