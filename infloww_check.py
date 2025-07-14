@@ -1466,20 +1466,17 @@ async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u, uid = update.effective_user, update.effective_user.id
     user_names[uid] = u.username
-    user_mode[uid]  = "off"
     removed_map[uid] = set()
-    save_shift(uid)
     if not user_status.get(uid, set()):
         return await context.bot.send_message(
             chat_id=TARGET_CHAT_ID,
             reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
             text="❌ Αφου δεν εχεις models ρε φρουτο.. τι κανεις;... Πρώτα χρησιμοποίησε /on."
         )
-    # Refactored check as per instructions
-    if user_mode[uid] == "off" and not user_status.get(uid, set()):
-        USER_BREAK_USED.pop(uid, None)
-    try: await update.message.delete()
-    except: pass
+    try:
+        await update.message.delete()
+    except:
+        pass
     msg = await context.bot.send_message(
         chat_id=TARGET_CHAT_ID,
         reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
