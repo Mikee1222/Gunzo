@@ -3,3 +3,5 @@ APScheduler
 pytz
 requests
 nest_asyncio
+supabase
+
