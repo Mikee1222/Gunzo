@@ -1,36 +1,1710 @@
+import os
+import asyncio
+import nest_asyncio
+nest_asyncio.apply()
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from supabase import create_client, Client
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackQueryHandler
+import json
+from telegram.ext import MessageHandler, filters
+import re
+import uuid
+import requests
+import pytz
+import csv
+import io
+from datetime import datetime, timedelta, timezone
+from collections import defaultdict
+from calendar import monthrange
 
 # === Notification Target ===
-GROUP_CHAT_ID = -1002123456789  # ID της ομαδικής συνομιλίας για ειδοποιήσεις live
-# ID and message to which bot should reply for certain commands
-TARGET_CHAT_ID = -1002200364773  # chat ID from t.me/2200364773/25 (use -100 prefix for channels)
-TARGET_REPLY_TO_MESSAGE_ID = 25  # reply to message number 25 in that chat
-HELP_REPLY_TO_MESSAGE_ID = 25431  # reply to message number for /help in the target channel
-BREAK_REPLY_TO_MESSAGE_ID = 17862  # reply to message number for /break and related commands
-WEEKLY_REPLY_TO_MESSAGE_ID = 11276  # reply-to message for /weekly_program in target channel
-MYPROGRAM_REPLY_TO_MESSAGE_ID = 25515  # reply-to message number for /myprogram in target channel
+TARGET_CHAT_ID = -1002200364773  # t.me/2200364773/25
+TARGET_REPLY_TO_MESSAGE_ID = 25   # message ID 25 in that chat
 
-ACTIVE_REPLY_TO_MESSAGE_ID = 25631  # reply-to message number for /active in the target channel
-STATUS_REPLY_TO_MESSAGE_ID = 25654  # reply to message number for /status in target channel
-NOTIFY_REPLY_TO_MESSAGE_ID = 26232  # reply-to message number for /notify in target channel
+# --- Supabase Setup ---
+SUPABASE_URL = "https://cuytywddvbqgdzmnhzou.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1eXR5d2RkdmJxZ2R6bW5oem91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3NTIzNDQsImV4cCI6MjA2ODMyODM0NH0.jcbmE2RAYg7xZcR6olB_Tw0dPRISqTjKftsBHt8sH7M"  # Βάλε εδώ το KEY σου
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === Greek day names constant ===
-DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
+# --- Telegram Bot Token ---
+TOKEN = "7140433953:AAEOEfkdFM3rkTu-eYn_S9aI3fY_EszkfT8"  # Βάλε εδώ το Telegram token σου
 
-# === Predefined user ID mappings ===
-KNOWN_USERS = {
-    "tsaqiris": 1673725703,
-    "mikekrp": 6431210056,
-    "evi_nikolaidou": 6700819251,
-    "maraggos": 2099171835,
-    "elias_drag": 2034365882,
-    "nikospapadop": 5864768017,
-    "bull056": 5536090159,
-    "riggersss": 1882063026,
-    "macraw99": 5801982873, 
-    "basileiou": 1841008949,
-    "anastasiss12": 1781244068,
-    "kouzounias": 5032709982,
-}
+# --- Λίστα με τα models του agency ---
+MODELS = [
+    "Lydia", "Miss Frost", "Lina", "Frika", "Iris", "Electra", "Nina", "Eirini",
+    "Marilia", "Areti", "Silia", "Iwanna", "Elvina", "Stefania", "Elena", "Natalia",
+    "Sabrina", "Barbie", "Antwnia", "Κωνσταντίνα Mummy", "Gavriela", "Χριστίνα","Tzwrtzina"
+]
+
+# --- Mistake Models List ---
+MISTAKE_MODELS = ["Lydia", "Lina", "Nina", "Miss Frost", "Frika", "Electra", "Iris"]
+
+# --- Live Models List ---
+LIVE_MODELS = ["Sabrina", "Natalia", "Miss Frost", "Lina", "Nina", "Frika", "Barbie"]
+
+# --- Helper: Debug print for callback_data ---
+def dbg_btn(label, callback_data):
+    print(f"DEBUG: Creating button '{label}' with callback_data='{callback_data}' (len={len(str(callback_data))})")
+    return InlineKeyboardButton(label, callback_data=callback_data)
+
+# --- /start Command ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not update.message:
+        return
+    # Always upsert user_id and username to Supabase
+    if user and user.username:
+        try:
+            supabase.table("users").upsert({
+                "user_id": str(user.id),
+                "username": user.username,
+                "first_name": user.first_name or ""
+            }).execute()
+        except Exception as e:
+            print(f"DEBUG: Failed to upsert user in /start: {e}")
+    await update.message.reply_text("👋 Καλώς ήρθες στο group bot!")
+
+# --- /register Command ---
+async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not update.message:
+        return
+    if user and user.username:
+        try:
+            supabase.table("users").upsert({
+                "user_id": str(user.id),
+                "username": user.username,
+                "first_name": user.first_name or ""
+            }).execute()
+            await update.message.reply_text("✅ Εγγράφηκες επιτυχώς στη Supabase!")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Σφάλμα εγγραφής: {e}")
+    else:
+        await update.message.reply_text("❌ Πρέπει να έχεις username στο Telegram για να εγγραφείς.")
+
+# --- /on Command ---
+async def on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    # Βρες όλα τα models που είναι ήδη on από ΟΛΟΥΣ τους χρήστες (χωρίς εξαίρεση)
+    unavailable_models = set()
+    try:
+        resp = supabase.table("users").select("user_id,models,active").eq("active", True).execute()
+        for row in resp.data:
+            ms = row.get("models") or []
+            if isinstance(ms, str):
+                try:
+                    import json
+                    ms = json.loads(ms)
+                except Exception:
+                    ms = []
+            unavailable_models.update(ms)
+    except Exception:
+        pass
+    # Αρχικοποιούμε το state του session
+    selected_models = set()
+    # Στέλνουμε το keyboard και κρατάμε το message_id
+    sent = await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text="Επίλεξε τα models σου:",
+        reply_markup=build_models_keyboard(selected_models, unavailable_models)
+    )
+    # Αποθηκεύουμε το session στο chat_data με key το message_id
+    if context.chat_data is not None and 'on_sessions' not in context.chat_data:
+        context.chat_data['on_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['on_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'selected_models': selected_models,
+            'unavailable_models': unavailable_models
+        }
+
+def build_models_keyboard(selected, unavailable):
+    keyboard = []
+    row = []
+    for i, model in enumerate(MODELS, 1):
+        if model in unavailable:
+            row.append(dbg_btn(f"🔒 {model}", "ignore"))
+        else:
+            checked = "🟢 " if model in selected else ""
+            row.append(dbg_btn(f"{checked}{model}", f"model_{model}"))
+        if i % 4 == 0 or i == len(MODELS):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "models_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    # Βρες το session για το συγκεκριμένο keyboard
+    session = context.chat_data.get('on_sessions', {}).get(msg.message_id) if context.chat_data and context.chat_data.get('on_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    initiator_id = session['initiator']
+    selected = session['selected_models']
+    unavailable = session['unavailable_models']
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    data = query.data
+    if data == "ignore":
+        await query.answer("Το μοντέλο αυτή τη στιγμή είναι ήδη on", show_alert=True)
+        return
+    if data.startswith("model_"):
+        model = data[6:]
+        if model in unavailable:
+            await query.answer("Το model είναι ήδη ενεργό από άλλον χρήστη.", show_alert=True)
+            return
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        # Ενημέρωσε το keyboard
+        await query.edit_message_reply_markup(reply_markup=build_models_keyboard(selected, unavailable))
+        await query.answer()
+    elif data == "models_ok":
+        # --- Ανάκτηση προηγούμενων models και start_time ---
+        old_models = []
+        old_start_time = None
+        had_no_models = False
+        try:
+            resp = supabase.table("users").select("models,start_time").eq("user_id", user_id).execute()
+            if resp.data and len(resp.data) > 0:
+                old_models = resp.data[0].get("models") or []
+                if isinstance(old_models, str):
+                    try:
+                        import json
+                        old_models = json.loads(old_models)
+                    except Exception:
+                        old_models = []
+                if not old_models:
+                    had_no_models = True
+                # --- Βρες το start_time της βάρδιας από το shifts table ---
+                if old_models:
+                    shift_resp = supabase.table("shifts").select("start_time").eq("user_id", user_id).eq("mode", "on").order("start_time", desc=True).limit(1).execute()
+                    if shift_resp.data and len(shift_resp.data) > 0:
+                        old_start_time = shift_resp.data[0].get("start_time")
+        except Exception:
+            pass
+        # --- Υπολογισμός duration ---
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        duration_str = "-"
+        # Χρησιμοποιώ τη λογική του /active: duration = now - start_time από το users table
+        try:
+            resp = supabase.table("users").select("start_time").eq("user_id", user_id).execute()
+            start_time = None
+            if resp.data and len(resp.data) > 0:
+                start_time = resp.data[0].get("start_time")
+            if start_time:
+                old_dt = datetime.fromisoformat(start_time)
+                delta = now - old_dt
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                duration_str = f"{h}:{m:02d}"
+            else:
+                duration_str = "0:00"
+        except Exception as e:
+            print(f"DEBUG: Exception στο duration υπολογισμό (on): {e}")
+            duration_str = "0:00"
+        # --- Αποθήκευση νέων models και start_time στο users ---
+        try:
+            # Add logic: ενώσε τα ήδη ενεργά με τα νέα, χωρίς διπλότυπα
+            all_models = set(old_models) | set(selected)
+            starting_shift = not old_models  # αν δεν είχε καθόλου μοντέλα πριν
+            supabase.table("users").upsert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "first_name": user.first_name or "",
+                "models": list(all_models),
+                "active": True,
+                "start_time": now_iso if starting_shift else old_start_time if old_start_time else now_iso
+            }).execute()
+            # --- Εισαγωγή νέου shift log στο shifts ΜΟΝΟ αν ξεκινάει βάρδια ---
+            if had_no_models and selected:
+                supabase.table("mistake_shifts").insert({
+                    "user_id": user_id,
+                    "username": user.username or f"id_{user_id}",
+                    "models": list(selected),
+                    "start_time": now_iso,
+                    "on_time": now_iso,
+                    "active": True,
+                    "mode": "on"
+                }).execute()
+            msg_text = (
+                f"🔛 Shift ON by @{user.username}\n"
+                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {duration_str}\n"
+                f"Models: {'Μόλις μπήκε!' if not old_models else ', '.join(old_models)}\n"
+                f"➕ Νέα: {', '.join(selected) if selected else 'κανένα'}"
+            )
+            await query.edit_message_text(msg_text)
+            # Καθάρισε το session
+            context.chat_data['on_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+
+# --- /off Command ---
+async def off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    # Βρες τα ενεργά models του χρήστη
+    active_models = []
+    start_time = None
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if resp.data and len(resp.data) > 0:
+            active = resp.data[0].get("active")
+            if active:
+                active_models = resp.data[0].get("models") or []
+                if isinstance(active_models, str):
+                    try:
+                        import json
+                        active_models = json.loads(active_models)
+                    except Exception:
+                        active_models = []
+                start_time = resp.data[0].get("start_time")
+    except Exception:
+        pass
+    if not active_models:
+        await update.message.reply_text("Δεν έχεις ενεργά μοντέλα.")
+        return
+    selected_models = set()
+    sent = await context.bot.send_message(
+        chat_id=TARGET_CHAT_ID,
+        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
+        text="Επίλεξε ποια μοντέλα θέλεις να κάνεις off:",
+        reply_markup=build_off_keyboard(active_models, selected_models)
+    )
+    if context.chat_data is not None and 'off_sessions' not in context.chat_data:
+        context.chat_data['off_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['off_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'active_models': set(active_models),
+            'selected_models': selected_models,
+            'start_time': start_time
+        }
+
+def build_off_keyboard(active_models, selected):
+    keyboard = []
+    row = []
+    for i, model in enumerate(active_models, 1):
+        checked = "🔴 " if model in selected else ""
+        row.append(dbg_btn(f"{checked}{model}", f"offmodel_{model}"))
+        if i % 4 == 0 or i == len(active_models):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "offmodels_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def off_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    session = context.chat_data.get('off_sessions', {}).get(msg.message_id) if context.chat_data.get('off_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    initiator_id = session['initiator']
+    active_models = session['active_models']
+    selected = session['selected_models']
+    start_time = session['start_time']
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    data = query.data
+    if data.startswith("offmodel_"):
+        model = data[9:]
+        if model not in active_models:
+            await query.answer("Το μοντέλο δεν είναι ενεργό.", show_alert=True)
+            return
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        await query.edit_message_reply_markup(reply_markup=build_off_keyboard(active_models, selected))
+        await query.answer()
+    elif data == "offmodels_ok":
+        if not selected:
+            await query.answer("Επίλεξε τουλάχιστον ένα μοντέλο.", show_alert=True)
+            return
+        # Υπολογισμός duration στο off_callback
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        duration_str = "-"
+        try:
+            resp = supabase.table("users").select("start_time").eq("user_id", user_id).execute()
+            start_time = None
+            if resp.data and len(resp.data) > 0:
+                start_time = resp.data[0].get("start_time")
+            if start_time:
+                old_dt = datetime.fromisoformat(start_time)
+                delta = now - old_dt
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                duration_str = f"{h}:{m:02d}"
+            else:
+                duration_str = "0:00"
+        except Exception as e:
+            print(f"DEBUG: Exception στο duration υπολογισμό (off): {e}")
+            duration_str = "0:00"
+        # Αφαίρεση των selected από τα ενεργά
+        new_models = list(active_models - selected)
+        # Ενημέρωση users
+        try:
+            if new_models:
+                # Ο χρήστης παραμένει ενεργός, ΔΕΝ αλλάζουμε το start_time!
+                supabase.table("users").upsert({
+                    "user_id": user_id,
+                    "username": user.username or f"id_{user_id}",
+                    "models": new_models,
+                    "active": True
+                }).execute()
+            else:
+                # Ο χρήστης βγήκε από όλα τα models, μηδενίζουμε το start_time
+                supabase.table("users").upsert({
+                    "user_id": user_id,
+                    "username": user.username or f"id_{user_id}",
+                    "models": [],
+                    "active": False,
+                    "start_time": None
+                }).execute()
+            # Καταγραφή shift στο shifts
+            supabase.table("shifts").insert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "models": list(selected),
+                "start_time": start_time,
+                "on_time": now_iso,
+                "active": False,
+                "mode": "off"
+            }).execute()
+            msg_text = (
+                f"🔻 Shift OFF by @{user.username}\n"
+                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {duration_str}\n"
+                f"Έκλεισαν: {', '.join(selected)}\n"
+                f"{'Ολοκλήρωσες τη βάρδιά σου!' if not new_models else 'Ανοιχτά: ' + ', '.join(new_models)}"
+            )
+            await query.edit_message_text(msg_text)
+            context.chat_data['off_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+
+# --- /active Command ---
+async def active_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    allowed_usernames = ["mikekrp", "tsaqiris"]
+    user = update.effective_user
+    if (user.username or "").lower() not in allowed_usernames:
+        await update.message.reply_text("Δεν έχεις δικαίωμα να δεις αυτή τη λίστα.")
+        return
+    try:
+        resp = supabase.table("users").select("user_id,first_name,models,start_time").eq("active", True).execute()
+        users = resp.data if resp and resp.data else []
+        if not users:
+            await update.message.reply_text("Δεν υπάρχουν ενεργοί chatters αυτή τη στιγμή.")
+            return
+        now = datetime.now(timezone.utc)
+        lines = []
+        for u in users:
+            fname = u.get("first_name") or "Άγνωστος"
+            models = u.get("models") or []
+            if isinstance(models, str):
+                try:
+                    import json
+                    models = json.loads(models)
+                except Exception:
+                    models = []
+            start_time = u.get("start_time")
+            duration_str = "-"
+            if start_time:
+                try:
+                    old_dt = datetime.fromisoformat(start_time)
+                    now = datetime.now(timezone.utc)
+                    delta = now - old_dt
+                    h, m = divmod(int(delta.total_seconds()), 3600)[0], divmod(int(delta.total_seconds()) % 3600, 60)[0]
+                    duration_str = f"{h}h {m}m"
+                except Exception:
+                    duration_str = "-"
+            lines.append(f"👤 {fname}\n⏱ {duration_str}\n📦 Models: {', '.join(models) if models else 'κανένα'}\n")
+        msg = "\n".join(lines)
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- /freemodels Command ---
+async def freemodels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        resp = supabase.table("users").select("models").eq("active", True).execute()
+        users = resp.data if resp and resp.data else []
+        busy_models = set()
+        for u in users:
+            ms = u.get("models") or []
+            if isinstance(ms, str):
+                try:
+                    import json
+                    ms = json.loads(ms)
+                except Exception:
+                    ms = []
+            busy_models.update(ms)
+        free_models = [m for m in MODELS if m not in busy_models]
+        if not free_models:
+            await update.message.reply_text("Δεν υπάρχουν ελεύθερα models αυτή τη στιγμή.")
+        else:
+            keyboard = []
+            row = []
+            for i, model in enumerate(free_models, 1):
+                row.append(dbg_btn(model, f"freepick_{model}"))
+                if i % 4 == 0 or i == len(free_models):
+                    keyboard.append(row)
+                    row = []
+            await update.message.reply_text("Επίλεξε ελεύθερο μοντέλο:", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- Free Model Pick Callback ---
+async def freepick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    user_id = str(user.id)
+    data = query.data
+    if not data.startswith("freepick_"):
+        return
+    model = data[len("freepick_"):]
+    # Ελέγχει αν το model είναι ακόμα ελεύθερο
+    try:
+        resp = supabase.table("users").select("user_id,models,active").eq("active", True).execute()
+        busy_models = set()
+        for u in resp.data:
+            ms = u.get("models") or []
+            if isinstance(ms, str):
+                try:
+                    import json
+                    ms = json.loads(ms)
+                except Exception:
+                    ms = []
+            busy_models.update(ms)
+        if model in busy_models:
+            await query.answer("Το μοντέλο μόλις έγινε on από άλλον χρήστη!", show_alert=True)
+            return
+        # Βρες τα ήδη ενεργά models του χρήστη
+        user_resp = supabase.table("users").select("models,active,first_name,username").eq("user_id", user_id).execute()
+        user_data = user_resp.data[0] if user_resp.data else {}
+        old_models = user_data.get("models") or []
+        if isinstance(old_models, str):
+            try:
+                import json
+                old_models = json.loads(old_models)
+            except Exception:
+                old_models = []
+        active = user_data.get("active", False)
+        first_name = user_data.get("first_name") or ""
+        username = user_data.get("username") or f"id_{user_id}"
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        # Freepick callback: ενημέρωση start_time μόνο αν ξεκινάει βάρδια
+        starting_shift = not active or not old_models
+        supabase.table("users").upsert({
+            "user_id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "models": list(all_models),
+            "active": True,
+            "start_time": now_iso if starting_shift else user_data.get("start_time")
+        }).execute()
+        # Αν ξεκινάει νέα βάρδια, καταχώρησε shift
+        if starting_shift:
+            supabase.table("shifts").insert({
+                "user_id": user_id,
+                "username": username,
+                "models": [model],
+                "start_time": now_iso,
+                "on_time": now_iso,
+                "active": True,
+                "mode": "on"
+            }).execute()
+        await query.answer(f"Το μοντέλο {model} προστέθηκε στη βάρδιά σου!", show_alert=True)
+        await query.edit_message_text(f"✅ Το μοντέλο {model} προστέθηκε στη βάρδιά σου!")
+    except Exception as e:
+        await query.answer("Σφάλμα!", show_alert=True)
+        await query.edit_message_text(f"❌ Σφάλμα: {e}")
+
+# --- /break Command ---
+async def break_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    # Βρες τα ενεργά models του χρήστη
+    active_models = []
+    start_time = None
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if resp.data and len(resp.data) > 0:
+            active = resp.data[0].get("active")
+            if active:
+                active_models = resp.data[0].get("models") or []
+                if isinstance(active_models, str):
+                    try:
+                        import json
+                        active_models = json.loads(active_models)
+                    except Exception:
+                        active_models = []
+                start_time = resp.data[0].get("start_time")
+    except Exception:
+        pass
+    if not active_models:
+        await update.message.reply_text("Δεν έχεις ενεργά μοντέλα.")
+        return
+    # Υπολογισμός υπολοίπου break time
+    now = datetime.now(timezone.utc)
+    max_break_minutes = 45
+    break_minutes_used = 0
+    try:
+        # Βρες το start_time της βάρδιας (όπως στο duration)
+        shifts_resp = supabase.table("shifts").select("mode,start_time").eq("user_id", user_id).order("start_time").execute()
+        shifts = shifts_resp.data if shifts_resp and shifts_resp.data else []
+        # Βρες το τελευταίο shift με mode='off' πριν το τώρα
+        current_index = len(shifts)
+        last_off_index = -1
+        for i in range(current_index - 1, -1, -1):
+            if shifts[i]["mode"] == "off":
+                last_off_index = i
+                break
+        shift_start = None
+        for i in range(last_off_index + 1, current_index):
+            if shifts[i]["mode"] == "on":
+                shift_start = shifts[i]["start_time"]
+                break
+        if last_off_index == -1 and not shift_start:
+            for s in shifts:
+                if s["mode"] == "on":
+                    shift_start = s["start_time"]
+                    break
+        # Άθροισε τα break durations από shift_start μέχρι τώρα
+        if shift_start:
+            for s in shifts:
+                if s["mode"] == "break" and s["start_time"] >= shift_start:
+                    mins = 0
+                    if s.get("duration"):
+                        mins = int(s["duration"])
+                    else:
+                        # fallback: duration = on_time - start_time ή τώρα - start_time
+                        try:
+                            bstart = datetime.fromisoformat(s["start_time"])
+                            bend = now
+                            if s.get("on_time"):
+                                bend = datetime.fromisoformat(s["on_time"])
+                            delta = bend - bstart
+                            mins = int(delta.total_seconds() // 60)
+                        except Exception:
+                            pass
+                    break_minutes_used += mins
+    except Exception:
+        pass
+    break_minutes_left = max(0, max_break_minutes - break_minutes_used)
+    if break_minutes_left <= 0:
+        await update.message.reply_text("Έχεις εξαντλήσει τα 45 λεπτά break για αυτή τη βάρδια!")
+        return
+    # Εμφάνισε τα κουμπιά
+    choices = [10, 15, 20, 25, 30, 45]
+    keyboard = []
+    row = []
+    emoji_map = {10: '🔟', 15: '1️⃣5️⃣', 20: '2️⃣0️⃣', 25: '2️⃣5️⃣', 30: '3️⃣0️⃣', 45: '4️⃣5️⃣'}
+    for i, mins in enumerate(choices, 1):
+        label = emoji_map.get(mins, '')
+        row.append(dbg_btn(label, f"breaklen_{mins}"))
+        if i % 3 == 0 or i == len(choices):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✏️", "breaklen_custom"), dbg_btn("❌ Cancel", "cancel_action")])
+    warning = "\n⚠️ Αν επιστρέψεις νωρίτερα με /back, θα αφαιρεθεί μόνο ο πραγματικός χρόνος break!"
+    await update.message.reply_text(
+        f"⏸️ <b>Διάλειμμα (Break)</b>\n"
+        f"Επίλεξε διάρκεια break (σου απομένουν 🕒 <b>{break_minutes_left}</b> λεπτά):"
+        f"{warning if break_minutes_left <= 15 else ''}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+    # Αποθήκευσε το υπόλοιπο break time στο user_data
+    context.user_data['break_minutes_left'] = break_minutes_left
+    context.user_data['active_models'] = active_models
+    context.user_data['start_time'] = start_time
+
+# --- Break Length Callback ---
+async def breaklen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    user_id = str(user.id)
+    data = query.data
+    break_minutes_left = context.user_data.get('break_minutes_left', 45)
+    active_models = context.user_data.get('active_models', [])
+    start_time = context.user_data.get('start_time')
+    if data.startswith("breaklen_"):
+        if data == "breaklen_custom":
+            await query.answer()
+            await query.edit_message_text("Γράψε πόσα λεπτά break θέλεις (1-45):")
+            context.user_data['awaiting_custom_break'] = True
+            return
+        mins = int(data.split('_')[1])
+        if mins > break_minutes_left:
+            await query.answer(f"Έχεις υπόλοιπο μόνο {break_minutes_left} λεπτά!", show_alert=True)
+            return
+        await do_break(user, user_id, mins, active_models, start_time, query, context)
+
+# --- Custom Break Handler ---
+async def custom_break_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('awaiting_custom_break'):
+        return
+    try:
+        mins = int(update.message.text.strip())
+        break_minutes_left = context.user_data.get('break_minutes_left', 45)
+        active_models = context.user_data.get('active_models', [])
+        start_time = context.user_data.get('start_time')
+        if not (1 <= mins <= 45):
+            await update.message.reply_text("Γράψε έναν αριθμό από 1 έως 45.")
+            return
+        if mins > break_minutes_left:
+            await update.message.reply_text(f"Έχεις υπόλοιπο μόνο {break_minutes_left} λεπτά!")
+            return
+        user = update.effective_user
+        user_id = str(user.id)
+        await do_break(user, user_id, mins, active_models, start_time, update.message, context)
+    except Exception:
+        await update.message.reply_text("Γράψε έναν έγκυρο αριθμό.")
+    context.user_data['awaiting_custom_break'] = False
+
+# --- Do Break ---
+async def do_break(user, user_id, mins, active_models, start_time, msg_obj, context):
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    try:
+        # Αφαίρεση όλων των models (βγαίνει τελείως off)
+        supabase.table("users").upsert({
+            "user_id": user_id,
+            "username": user.username or f"id_{user_id}",
+            "first_name": user.first_name or "",
+            "models": [],
+            "active": False,
+            "start_time": None
+        }).execute()
+        # Καταγραφή shift στο shifts
+        supabase.table("shifts").insert({
+            "user_id": user_id,
+            "username": user.username or f"id_{user_id}",
+            "models": active_models,
+            "start_time": now_iso,
+            "on_time": None,
+            "active": False,
+            "mode": "break",
+            "duration": mins
+        }).execute()
+        # Προγραμμάτισε jobs για ειδοποιήσεις break
+        chat_id = user.id
+        group_id = msg_obj.chat.id if hasattr(msg_obj, 'chat') else None
+        username = user.username or f"id_{user_id}"
+        break_end = now + timedelta(minutes=mins)
+        # Ακύρωσε προηγούμενα jobs αν υπάρχουν
+        if 'break_jobs' in context.user_data:
+            for job in context.user_data['break_jobs']:
+                try:
+                    job.schedule_removal()
+                except Exception:
+                    pass
+            context.user_data['break_jobs'] = []
+        # 5 λεπτά πριν το τέλος
+        if mins > 5:
+            job1 = context.application.job_queue.run_once(
+                break_5min_warning, when=mins*60-5*60,
+                data={'user_id': user_id, 'chat_id': chat_id, 'username': username}
+            )
+            context.user_data.setdefault('break_jobs', [])
+            context.user_data['break_jobs'].append(job1)
+        # Τέλος break
+        job2 = context.application.job_queue.run_once(
+            break_end_notify, when=mins*60,
+            data={'user_id': user_id, 'chat_id': chat_id, 'group_id': group_id, 'username': username, 'break_end': break_end}
+        )
+        context.user_data.setdefault('break_jobs', [])
+        context.user_data['break_jobs'].append(job2)
+        msg = (
+            f"⏸️ <b>Έκανες break για {mins} λεπτά!</b>\n"
+            f"@{username} βγήκε από όλα τα μοντέλα.\n"
+        )
+        # Υπόλοιπο break
+        # Υπολογισμός υπολοίπου break (όπως στο /back)
+        shifts_all_resp = supabase.table("shifts").select("mode,start_time,duration").eq("user_id", user_id).order("start_time").execute()
+        shifts_all = shifts_all_resp.data if shifts_all_resp and shifts_all_resp.data else []
+        current_index = len(shifts_all)
+        last_off_index = -1
+        for i in range(current_index - 1, -1, -1):
+            if shifts_all[i]["mode"] == "off":
+                last_off_index = i
+                break
+        shift_start = None
+        for i in range(last_off_index + 1, current_index):
+            if shifts_all[i]["mode"] == "on":
+                shift_start = shifts_all[i]["start_time"]
+                break
+        if last_off_index == -1 and not shift_start:
+            for s in shifts_all:
+                if s["mode"] == "on":
+                    shift_start = s["start_time"]
+                    break
+        max_break_minutes = 45
+        break_minutes_used = 0
+        if shift_start:
+            for s in shifts_all:
+                if s["mode"] == "break" and s["start_time"] >= shift_start:
+                    mins_used = int(s.get("duration") or 0)
+                    break_minutes_used += mins_used
+        break_minutes_left = max(0, max_break_minutes - break_minutes_used)
+        # Διόρθωση: αφαίρεσε τα λεπτά του break που μόλις πήρε
+        break_minutes_left = max(0, break_minutes_left - mins)
+        msg += f"Υπόλοιπο break: 🕒 <b>{break_minutes_left}</b> λεπτά"
+        # Σωστό reply ανάλογα με το αντικείμενο
+        if hasattr(msg_obj, 'reply_text'):
+            await msg_obj.reply_text(msg, parse_mode='HTML')
+        elif hasattr(msg_obj, 'edit_message_text'):
+            await msg_obj.edit_message_text(msg, parse_mode='HTML')
+    except Exception as e:
+        if hasattr(msg_obj, 'reply_text'):
+            await msg_obj.reply_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+        elif hasattr(msg_obj, 'edit_message_text'):
+            await msg_obj.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+
+# --- /back Command ---
+async def back_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    try:
+        # Βρες το τελευταίο shift mode='break' χωρίς on_time
+        shifts_resp = supabase.table("shifts").select("id,models,start_time,duration,on_time,mode").eq("user_id", user_id).order("start_time", desc=True).limit(5).execute()
+        shifts = shifts_resp.data if shifts_resp and shifts_resp.data else []
+        break_shift = None
+        for s in shifts:
+            if s["mode"] == "break" and not s.get("on_time"):
+                break_shift = s
+                break
+        if not break_shift:
+            await update.message.reply_text("Δεν είσαι σε break αυτή τη στιγμή.")
+            return
+        # Υπολόγισε πόσα λεπτά πέρασαν
+        bstart = datetime.fromisoformat(break_shift["start_time"])
+        mins_used = int((now - bstart).total_seconds() // 60)
+        # Ενημέρωσε το shift με το πραγματικό duration και on_time
+        supabase.table("shifts").update({"duration": mins_used, "on_time": now_iso}).eq("id", break_shift["id"]).execute()
+        # Επαναφορά models και active
+        models = break_shift.get("models") or []
+        supabase.table("users").upsert({
+            "user_id": user_id,
+            "username": user.username or f"id_{user_id}",
+            "first_name": user.first_name or "",
+            "models": models,
+            "active": True,
+            "start_time": None  # Δεν αλλάζουμε τη βάρδια, μόνο επιστροφή
+        }).execute()
+        # Υπολόγισε νέο υπόλοιπο break (μόνο το duration κάθε break shift)
+        shifts_all_resp = supabase.table("shifts").select("mode,start_time,duration").eq("user_id", user_id).order("start_time").execute()
+        shifts_all = shifts_all_resp.data if shifts_all_resp and shifts_all_resp.data else []
+        # Βρες το start_time της βάρδιας (όπως στο duration)
+        current_index = len(shifts_all)
+        last_off_index = -1
+        for i in range(current_index - 1, -1, -1):
+            if shifts_all[i]["mode"] == "off":
+                last_off_index = i
+                break
+        shift_start = None
+        for i in range(last_off_index + 1, current_index):
+            if shifts_all[i]["mode"] == "on":
+                shift_start = shifts_all[i]["start_time"]
+                break
+        if last_off_index == -1 and not shift_start:
+            for s in shifts_all:
+                if s["mode"] == "on":
+                    shift_start = s["start_time"]
+                    break
+        max_break_minutes = 45
+        break_minutes_used = 0
+        if shift_start:
+            for s in shifts_all:
+                if s["mode"] == "break" and s["start_time"] >= shift_start:
+                    mins = int(s.get("duration") or 0)
+                    break_minutes_used += mins
+        break_minutes_left = max(0, max_break_minutes - break_minutes_used)
+        await update.message.reply_text(f"@{user.username or user_id} Επέστρεψες από break! Χρησιμοποίησες {mins_used} λεπτά, υπόλοιπο break: {break_minutes_left} λεπτά.")
+        # Ακύρωσε jobs break
+        if 'break_jobs' in context.user_data:
+            for job in context.user_data['break_jobs']:
+                try:
+                    job.schedule_removal()
+                except Exception:
+                    pass
+            context.user_data['break_jobs'] = []
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- Break notification jobs ---
+async def break_5min_warning(context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.job.data['user_id']
+    chat_id = context.job.data['chat_id']
+    username = context.job.data.get('username', user_id)
+    await context.bot.send_message(chat_id=chat_id, text=f"⏰ @{username} σε 5 λεπτά τελειώνει το break σου!")
+
+async def break_end_notify(context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.job.data['user_id']
+    chat_id = context.job.data['chat_id']
+    group_id = context.job.data['group_id']
+    username = context.job.data['username']
+    # Προσθήκη κουμπιού επιστροφής
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Επιστροφή", callback_data=f"breakreturn_{user_id}")]
+    ])
+    await context.bot.send_message(chat_id=chat_id, text=f"⏰ @{username} το break σου τελείωσε! Επιστροφή στη βάρδια.", reply_markup=keyboard)
+    # Προγραμματίζουμε έλεγχο για καθυστέρηση κάθε 1 λεπτό
+    context.job_queue.run_repeating(break_late_check, interval=60, first=60, data={
+        'user_id': user_id,
+        'group_id': group_id,
+        'username': username,
+        'break_end': context.job.data['break_end']
+    }, name=f"latecheck_{user_id}")
+
+# --- Break Return Callback ---
+async def breakreturn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    user_id = str(user.id)
+    group_id = None
+    # Βρες το group_id από το τελευταίο break shift
+    try:
+        shifts_resp = supabase.table("shifts").select("id,models,start_time,duration,on_time,mode").eq("user_id", user_id).order("start_time", desc=True).limit(1).execute()
+        shifts = shifts_resp.data if shifts_resp and shifts_resp.data else []
+        if shifts:
+            group_id = context.bot_data.get('last_group_id')
+    except Exception:
+        pass
+    # Κάνε trigger το /back
+    class DummyUpdate:
+        def __init__(self, user, query):
+            self.effective_user = user
+            self.message = query.message
+    dummy_update = DummyUpdate(user, query)
+    await back_command(dummy_update, context)
+    # Υπολόγισε υπόλοιπο break
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    try:
+        shifts_all_resp = supabase.table("shifts").select("mode,start_time,duration").eq("user_id", user_id).order("start_time").execute()
+        shifts_all = shifts_all_resp.data if shifts_all_resp and shifts_all_resp.data else []
+        current_index = len(shifts_all)
+        last_off_index = -1
+        for i in range(current_index - 1, -1, -1):
+            if shifts_all[i]["mode"] == "off":
+                last_off_index = i
+                break
+        shift_start = None
+        for i in range(last_off_index + 1, current_index):
+            if shifts_all[i]["mode"] == "on":
+                shift_start = shifts_all[i]["start_time"]
+                break
+        if last_off_index == -1 and not shift_start:
+            for s in shifts_all:
+                if s["mode"] == "on":
+                    shift_start = s["start_time"]
+                    break
+        max_break_minutes = 45
+        break_minutes_used = 0
+        if shift_start:
+            for s in shifts_all:
+                if s["mode"] == "break" and s["start_time"] >= shift_start:
+                    mins = int(s.get("duration") or 0)
+                    break_minutes_used += mins
+        break_minutes_left = max(0, max_break_minutes - break_minutes_used)
+        if group_id:
+            await context.bot.send_message(chat_id=group_id, text=f"@{user.username or user_id} επέστρεψε από το break! Υπόλοιπο break: {break_minutes_left} λεπτά.")
+    except Exception:
+        pass
+    await query.answer("Επέστρεψες από break!", show_alert=True)
+
+async def break_late_check(context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.job.data['user_id']
+    group_id = context.job.data['group_id']
+    username = context.job.data['username']
+    break_end = context.job.data['break_end']
+    # Έλεγξε αν ο χρήστης είναι ακόμα σε break
+    try:
+        resp = supabase.table("users").select("active").eq("user_id", user_id).execute()
+        if resp.data and resp.data[0].get("active"):
+            # Επέστρεψε, ακύρωσε το job
+            context.job.schedule_removal()
+            return
+        # Υπολόγισε πόσα λεπτά αργεί
+        now = datetime.now(timezone.utc)
+        late = int((now - break_end).total_seconds() // 60)
+        if late > 0:
+            await context.bot.send_message(chat_id=group_id, text=f"⚠️ @{username} άργησε να επιστρέψει από το break του! Αργεί {late} λεπτά.")
+    except Exception:
+        pass
+
+# --- /status Command ---
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user is None or not update.message:
+        return
+    user_id = str(user.id)
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if not resp.data or len(resp.data) == 0:
+            await update.message.reply_text("Δεν βρέθηκαν δεδομένα για εσένα.")
+            return
+        user_data = resp.data[0]
+        models = user_data.get("models") or []
+        if isinstance(models, str):
+            try:
+                import json
+                models = json.loads(models)
+            except Exception:
+                models = []
+        start_time = user_data.get("start_time")
+        duration_str = "-"
+        if start_time:
+            try:
+                old_dt = datetime.fromisoformat(start_time)
+                now = datetime.now(timezone.utc)
+                delta = now - old_dt
+                h, m = divmod(int(delta.total_seconds()), 3600)[0], divmod(int(delta.total_seconds()) % 3600, 60)[0]
+                duration_str = f"{h}h {m}m"
+            except Exception:
+                duration_str = "-"
+        msg = (
+            f"📦 Models: {', '.join(models) if models else 'κανένα'}\n"
+            f"⏱ Μέσα: {duration_str}"
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- !status @username Handler ---
+async def mention_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+    # Πιάσε το !status @username
+    match = re.match(r"!status\s+@?(\w+)", update.message.text.strip())
+    if not match:
+        return
+    username = match.group(1)
+    try:
+        # Βρες τον χρήστη με αυτό το username
+        resp = supabase.table("users").select("models,start_time,active,username,first_name").eq("username", username).execute()
+        if not resp.data or len(resp.data) == 0:
+            await update.message.reply_text(f"Δεν βρέθηκε χρήστης @{username}.")
+            return
+        user_data = resp.data[0]
+        models = user_data.get("models") or []
+        if isinstance(models, str):
+            try:
+                import json
+                models = json.loads(models)
+            except Exception:
+                models = []
+        start_time = user_data.get("start_time")
+        duration_str = "-"
+        if start_time:
+            try:
+                old_dt = datetime.fromisoformat(start_time)
+                now = datetime.now(timezone.utc)
+                delta = now - old_dt
+                h, m = divmod(int(delta.total_seconds()), 3600)[0], divmod(int(delta.total_seconds()) % 3600, 60)[0]
+                duration_str = f"{h}h {m}m"
+            except Exception:
+                duration_str = "-"
+        fname = user_data.get("first_name") or username
+        msg = (
+            f"👤 @{username} ({fname})\n"
+            f"📦 Models: {', '.join(models) if models else 'κανένα'}\n"
+            f"⏱ Μέσα: {duration_str}"
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- Give subsystem (refactored) ---
+# In-memory dicts for give flows
+GIVE_TARGET = {}
+GIVE_SELECTED = {}
+CONFIRM_FLOW = {}
+RECIPIENT_CONFIRM_FLOW = {}
+ALLOWED_APPROVERS = ["mikekrp", "tsaqiris"]  # Add your admin usernames here
+KNOWN_USERS = {}  # username (lowercase) -> user_id, fill this at startup or dynamically
+
+# Replace the give command and callbacks with the following:
+
+async def give_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message or not update.message.text:
+        return
+    user_id = str(update.effective_user.id)
+    match = re.match(r"/give\s+@?(\w+)", update.message.text.strip())
+    if not match:
+        await update.message.reply_text("Χρησιμοποίησε: /give @username")
+        return
+    target_username = match.group(1)
+    if target_username.lower() == (update.effective_user.username or '').lower():
+        await update.message.reply_text("Δεν μπορείς να δώσεις models στον εαυτό σου!")
+        return
+    # Βρες τα ενεργά models του χρήστη που κάνει το command
+    try:
+        resp = supabase.table("users").select("models").eq("user_id", user_id).execute()
+        if not resp.data or len(resp.data) == 0:
+            await update.message.reply_text("Δεν βρέθηκαν ενεργά models για εσένα.")
+            return
+        models = resp.data[0].get("models") or []
+        if isinstance(models, str):
+            try:
+                import json
+                models = json.loads(models)
+            except Exception:
+                models = []
+        if not models:
+            await update.message.reply_text("Δεν έχεις ενεργά models για να δώσεις.")
+            return
+        selected_models = set()
+        sent = await update.message.reply_text(
+            f"Επίλεξε ποια models θέλεις να δώσεις στον @{target_username}:",
+            reply_markup=build_give_keyboard(models, selected_models)
+        )
+        key = (sent.chat.id, sent.message_id)
+        GIVE_TARGET[key] = target_username
+        GIVE_SELECTED[key] = set()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+def build_give_keyboard(models, selected):
+    keyboard = []
+    row = []
+    for i, model in enumerate(models, 1):
+        checked = "🟢 " if model in selected else ""
+        row.append(dbg_btn(f"{checked}{model}", f"givepick_{model}"))
+        if i % 4 == 0 or i == len(models):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "giveok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def give_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not q or not q.message:
+        return
+    sel = q.data
+    chat = q.message.chat
+    uid = q.from_user.id
+    key = (chat.id, q.message.message_id)
+    if key in GIVE_TARGET:
+        if sel.startswith("givepick_"):
+            model = sel[len("givepick_"):]
+            selset = GIVE_SELECTED[key]
+            selset.symmetric_difference_update({model})
+            # Only show user's current models, not all models
+            user_status = supabase.table("users").select("models").eq("user_id", uid).execute()
+            user_models = user_status.data[0].get("models") if user_status.data else []
+            if isinstance(user_models, str):
+                try:
+                    import json
+                    user_models = json.loads(user_models)
+                except Exception:
+                    user_models = []
+            return await q.message.edit_reply_markup(reply_markup=build_give_keyboard(user_models, selset))
+        elif sel == "giveok":
+            selset = GIVE_SELECTED.pop(key, set())
+            target = GIVE_TARGET.pop(key)
+            giver = q.from_user.username
+            models = ", ".join(selset) or "κανένα"
+            await q.message.delete()
+            from telegram.helpers import escape_markdown
+            escaped_models = escape_markdown(models, version=2)
+            escaped_target = escape_markdown(target, version=2)
+            cm = await context.bot.send_message(
+                chat_id=chat.id,
+                text=f"🔔 Πατήστε ✅ για να επιβεβαιώσετε μοντέλα *{escaped_models}* προς {escaped_target}:",
+                parse_mode="MarkdownV2"
+            )
+            CONFIRM_FLOW[cm.message_id] = (giver, target, models)
+            markup = InlineKeyboardMarkup([[
+                dbg_btn("✅ Επιβεβαίωση", f"confirm_{cm.message_id}"),
+                dbg_btn("❌ Απόρριψη",     f"reject_{cm.message_id}")
+            ]])
+            return await cm.edit_reply_markup(reply_markup=markup)
+    # --- Confirmation callbacks ---
+    if sel.startswith(("confirm_","reject_")):
+        approver = q.from_user.username
+        action, mid = sel.split("_",1)
+        if approver not in ALLOWED_APPROVERS:
+            await q.answer("❌ Δεν είσαι admin, τι κάνεις εκεί;", show_alert=True)
+            for admin_username in ALLOWED_APPROVERS:
+                admin_id = KNOWN_USERS.get(admin_username)
+                if admin_id:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=f"⚠️ Ο @{approver} προσπάθησε να {action} στο give."
+                    )
+            return
+        mid = int(mid)
+        values = CONFIRM_FLOW.pop(mid, None)
+        if values is None:
+            return await context.bot.send_message(chat.id, "❌ Δεν βρέθηκε η πληροφορία της απόδοσης.")
+        giver, target, models = values
+        # Always fetch user_id from Supabase
+        try:
+            resp = supabase.table("users").select("user_id,first_name").eq("username", target).execute()
+            if not resp.data or len(resp.data) == 0:
+                return await context.bot.send_message(chat.id, f"❌ Δεν βρέθηκε ο χρήστης {target} στη Supabase.")
+            target_id = resp.data[0]['user_id']
+        except Exception:
+            return await context.bot.send_message(chat.id, f"❌ Σφάλμα Supabase κατά το lookup του χρήστη {target}.")
+        await q.message.delete()
+        recipient_id = target_id
+        if action == "confirm":
+            RECIPIENT_CONFIRM_FLOW[mid] = (giver, recipient_id, models, chat.id)
+            try:
+                await context.bot.send_message(
+                    chat_id=recipient_id,
+                    text=f"🎁 Ο @{giver} θέλει να σου μεταβιβάσει μοντέλα: {models}.\nΠατήστε αποδοχή:",
+                    reply_markup=InlineKeyboardMarkup([[
+                        dbg_btn("✅ Αποδοχή", f"acceptgive_{mid}")
+                    ]]),
+                    reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+                )
+            except Exception as ex:
+                return await context.bot.send_message(chat.id, f"❌ Δεν μπόρεσα να στείλω μήνυμα στον χρήστη @{target}. Πιθανόν δεν έχει κάνει /start στο bot.")
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=f"🔔 Οι admins αποδέχτηκαν το αίτημά σου @{giver} και περιμένουμε από τον @{target} να πατήσει Αποδοχή για να γίνει το give.",
+                reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+            )
+            return
+        else:
+            return await context.bot.send_message(
+                chat_id=chat.id,
+                text=f"❌ Απορρίφθηκε η απόδοση σε {target}."
+            )
+    if sel.startswith("acceptgive_"):
+        mid = int(sel[len("acceptgive_"):])
+        values = RECIPIENT_CONFIRM_FLOW.pop(mid, None)
+        if values is None:
+            return await context.bot.send_message(q.message.chat.id, "❌ Δεν βρέθηκε η πληροφορία της απόδοσης.")
+        giver, recipient_id, models, group_chat_id = values
+        # Εδώ κάνε το transfer στο supabase και στείλε τα τελικά μηνύματα
+        await q.message.delete()
+        # --- Fetch usernames and models from Supabase ---
+        try:
+            # Giver info
+            resp_giver = supabase.table("users").select("models,username").eq("username", giver).execute()
+            old_giver_models = resp_giver.data[0].get("models") if resp_giver.data else []
+            if isinstance(old_giver_models, str):
+                try:
+                    import json
+                    old_giver_models = json.loads(old_giver_models)
+                except Exception:
+                    old_giver_models = []
+            giver_username = resp_giver.data[0].get("username") if resp_giver.data else giver
+            # Recipient info
+            resp_rec = supabase.table("users").select("models,username").eq("user_id", recipient_id).execute()
+            old_rec_models = resp_rec.data[0].get("models") if resp_rec.data else []
+            if isinstance(old_rec_models, str):
+                try:
+                    import json
+                    old_rec_models = json.loads(old_rec_models)
+                except Exception:
+                    old_rec_models = []
+            rec_username = resp_rec.data[0].get("username") if resp_rec.data else recipient_id
+            # --- Update models in Supabase ---
+            given_models = [m.strip() for m in models.split(",")]
+            new_giver_models = [m for m in old_giver_models if m not in given_models]
+            new_rec_models = list(set(old_rec_models) | set(given_models))
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            now_str = now.strftime('%H:%M')
+            # Update giver
+            supabase.table("users").upsert({"user_id": str(q.from_user.id), "models": new_giver_models, "active": bool(new_giver_models), "start_time": now_iso if new_giver_models else None}).execute()
+            print(f"DEBUG: GIVE FLOW upsert giver user_id={q.from_user.id} models={new_giver_models} active={bool(new_giver_models)}")
+            # Update recipient
+            supabase.table("users").upsert({"user_id": str(recipient_id), "models": new_rec_models, "active": True, "start_time": now_iso}).execute()
+            # Insert shift logs
+            supabase.table("shifts").insert({
+                "user_id": str(recipient_id),
+                "username": rec_username,
+                "models": given_models,
+                "start_time": now_iso,
+                "on_time": now_iso,
+                "active": True,
+                "mode": "on"
+            }).execute()
+            supabase.table("shifts").insert({
+                "user_id": str(q.from_user.id),
+                "username": giver_username,
+                "models": given_models,
+                "start_time": now_iso,
+                "on_time": now_iso,
+                "active": False,
+                "mode": "off"
+            }).execute()
+            # --- Group notifications ---
+            msg_on = (
+                f"🔛 Shift ON by @{rec_username}\n"
+                f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                f"Models: {', '.join(old_rec_models) if old_rec_models else 'κανένα'}\n"
+                f"➕ Νέα: {', '.join(given_models)}"
+            )
+            msg_off = (
+                f"🔻 Shift OFF by @{giver_username}\n"
+                f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                f"Έκλεισαν: {', '.join(new_giver_models) if new_giver_models else 'κανένα'}\n"
+                f"Εδωσε: {', '.join(given_models)}"
+            )
+            await context.bot.send_message(chat_id=group_chat_id, text=msg_on)
+            await context.bot.send_message(chat_id=group_chat_id, text=msg_off)
+            # --- Private notification ---
+            await context.bot.send_message(
+                chat_id=recipient_id,
+                text=f"🎉 Έλαβες τα μοντέλα: {', '.join(given_models)} από τον @{giver_username}!"
+            )
+        except Exception as ex:
+            return await context.bot.send_message(group_chat_id, f"❌ Σφάλμα κατά το shift transfer: {ex}")
+        return
+
+# --- Give Approve/Reject Callback ---
+async def give_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    admin_usernames = ["mikekrp", "tsaqiris"]
+    if user is None or (user.username or '').lower() not in admin_usernames:
+        await query.answer("Δεν έχεις δικαίωμα να εγκρίνεις/απορρίψεις αυτή τη μεταφορά.", show_alert=True)
+        return
+    data = query.data
+    if data.startswith("giveapprove_"):
+        _, give_key = data.split('_', 1)
+        give_data = context.bot_data.get('give_pending', {}).get(give_key)
+        if not give_data:
+            await query.edit_message_text("❌ Η μεταφορά δεν βρέθηκε ή έχει λήξει.")
+            return
+        from_id = give_data['from_id']
+        target_username = give_data['target_username']
+        selected = give_data['selected']
+        group_id = give_data['group_id']
+        # Βρες το user_id του target και στείλε του μήνυμα αποδοχής
+        try:
+            resp = supabase.table("users").select("user_id,first_name").eq("username", target_username).execute()
+            if not resp.data or len(resp.data) == 0:
+                await query.edit_message_text(f"Δεν βρέθηκε χρήστης @{target_username}.")
+                return
+            target_id = resp.data[0]['user_id']
+            target_first_name = resp.data[0].get('first_name') or target_username
+            # Βρες το username του from_id
+            resp_from = supabase.table("users").select("username,first_name").eq("user_id", from_id).execute()
+            from_username = resp_from.data[0].get('username') if resp_from.data else from_id
+            from_first_name = resp_from.data[0].get('first_name') if resp_from.data else from_id
+            # Στείλε προσωπικό μήνυμα στον παραλήπτη
+            # Χρησιμοποίησε το ίδιο give_key για τη συνέχεια
+            context.bot_data['give_pending'][give_key].update({
+                'target_id': target_id,
+                'from_username': from_username,
+                'from_first_name': from_first_name
+            })
+            accept_keyboard = InlineKeyboardMarkup([
+                [dbg_btn("✅ Αποδοχή", f"givefinalaccept_{give_key}")]
+            ])
+            try:
+                print(f"DEBUG: Sending to user_id={target_id} (type={type(target_id)})")
+                chat_id = int(target_id) if isinstance(target_id, str) and str(target_id).isdigit() else target_id
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"👤 Ο @{from_username} θέλει να σου μεταφέρει τα models: {', '.join(selected)}.\nΠαρακαλώ πάτησε Αποδοχή για να ολοκληρωθεί η μεταφορά.",
+                    reply_markup=accept_keyboard,
+                    reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+                )
+            except Exception as ex:
+                print(f"DEBUG: Failed to send to user_id={target_id} ex={ex}")
+                await query.edit_message_text(f"Δεν μπόρεσα να στείλω μήνυμα στον χρήστη @{target_username}. Ελέγξτε αν έχει ξεκινήσει το bot. [DEBUG: {target_id} type={type(target_id)}]")
+                return
+            await query.edit_message_text(f"✅ Η μεταφορά εγκρίθηκε από τον @{user.username}. Περιμένουμε αποδοχή από τον @{target_username}.")
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα: {e}")
+    elif data.startswith("givereject_"):
+        _, give_key = data.split('_', 1)
+        give_data = context.bot_data.get('give_pending', {}).get(give_key)
+        if not give_data:
+            await query.edit_message_text("❌ Η μεταφορά δεν βρέθηκε ή έχει λήξει.")
+            return
+        selected = give_data['selected']
+        target_username = give_data['target_username']
+        await query.edit_message_text(f"❌ Η μεταφορά των μοντέλων: {', '.join(selected)} στον @{target_username} απορρίφθηκε από τον @{user.username}.")
+    print(f"DEBUG: [give_admin_callback] group_id={session['group_id']} (type={type(session['group_id'])}) [give_key={give_key}]")
+
+# --- Give Final Accept Callback ---
+async def give_final_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None or query.data is None or query.from_user is None:
+        return
+    data = query.data
+    user = query.from_user
+    if data.startswith("givefinalaccept_"):
+        _, give_key = data.split('_', 1)
+        give_data = context.bot_data.get('give_pending', {}).get(give_key)
+        if not give_data:
+            await query.edit_message_text("❌ Η μεταφορά δεν βρέθηκε ή έχει λήξει.")
+            return
+        from_id = give_data['from_id']
+        target_id = give_data['target_id']
+        from_username = give_data['from_username']
+        target_username = give_data['target_username']
+        selected = give_data['selected']
+        group_id = give_data['group_id']
+        # Επίτρεψε μόνο στον παραλήπτη να το πατήσει
+        if str(user.id) != str(target_id):
+            await query.answer("Δεν έχεις δικαίωμα να αποδεχτείς αυτή τη μεταφορά.", show_alert=True)
+            return
+        try:
+            # Βρες τα group στα οποία είναι το bot (θα στείλουμε στην ομαδική)
+            group_id = None
+            if query.message and query.message.chat and query.message.chat.type in ["group", "supergroup"]:
+                group_id = query.message.chat.id
+            # Πάρε τα προηγούμενα models του παραλήπτη
+            resp_target = supabase.table("users").select("models,username").eq("user_id", target_id).execute()
+            old_target_models = resp_target.data[0].get('models') if resp_target.data else []
+            if isinstance(old_target_models, str):
+                try:
+                    import json
+                    old_target_models = json.loads(old_target_models)
+                except Exception:
+                    old_target_models = []
+            target_username = resp_target.data[0].get('username') if resp_target.data else target_id
+            # Κάνε τον παραλήπτη shift on με αυτά τα models
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            now_str = now.strftime('%H:%M')
+            new_target_models = list(set(old_target_models) | set(selected))
+            supabase.table("users").upsert({
+                "user_id": target_id,
+                "models": new_target_models,
+                "active": True,
+                "start_time": now_iso
+            }).execute()
+            supabase.table("shifts").insert({
+                "user_id": target_id,
+                "username": user.username or f"id_{target_id}",
+                "models": selected,
+                "start_time": now_iso,
+                "on_time": now_iso,
+                "active": True,
+                "mode": "on"
+            }).execute()
+            # Πάρε τα προηγούμενα models του from_id
+            resp2 = supabase.table("users").select("models,username").eq("user_id", from_id).execute()
+            my_models = resp2.data[0].get('models') if resp2.data else []
+            if isinstance(my_models, str):
+                try:
+                    import json
+                    my_models = json.loads(my_models)
+                except Exception:
+                    my_models = []
+            from_username_real = resp2.data[0].get('username') if resp2.data else from_username
+            new_my_models = [m for m in my_models if m not in selected]
+            supabase.table("users").upsert({"user_id": from_id, "models": new_my_models, "active": False, "start_time": None}).execute()
+            supabase.table("shifts").insert({
+                "user_id": from_id,
+                "username": from_username_real,
+                "models": selected,
+                "start_time": now_iso,
+                "on_time": now_iso,
+                "active": False,
+                "mode": "off"
+            }).execute()
+            # Μηνύματα στην ομαδική
+            if group_id and group_id != 'None':
+                try:
+                    group_id_int = int(group_id)
+                    print(f"DEBUG: Sending group messages to group_id={group_id_int} (type={type(group_id_int)})")
+                    msg_on = (
+                        f"🔛 Shift ON by @{target_username}\n"
+                        f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                        f"Models: {', '.join(old_target_models) if old_target_models else 'κανένα'}\n"
+                        f"➕ Νέα: {', '.join(selected)}"
+                    )
+                    msg_off = (
+                        f"🔻 Shift OFF by @{from_username_real}\n"
+                        f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                        f"Έκλεισαν: {', '.join(new_my_models) if new_my_models else 'κανένα'}\n"
+                        f"Εδωσε: {', '.join(selected)}"
+                    )
+                    await context.bot.send_message(chat_id=group_id_int, text=msg_on)
+                    await context.bot.send_message(chat_id=group_id_int, text=msg_off)
+                except Exception as ex:
+                    print(f"DEBUG: Failed to send group messages to group_id={group_id} ex={ex}")
+            await query.edit_message_text("✅ Αποδέχτηκες τα models και είσαι πλέον σε shift ON!")
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα: {e}")
+        del context.bot_data['give_pending'][give_key]
+    print(f"DEBUG: [give_final_accept_callback] group_id={session['group_id']} (type={type(session['group_id'])}) [give_key={give_key}]")
+
+# --- Cancel Callback ---
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    msg = query.message
+    user = query.from_user
+    uname = user.username if user and user.username else user.first_name if user and user.first_name else "άγνωστος"
+    # Καθάρισε όλα τα πιθανά sessions για το συγκεκριμένο message_id
+    for session_key in ['on_sessions', 'off_sessions', 'give_sessions']:
+        if context.chat_data and session_key in context.chat_data:
+            context.chat_data[session_key].pop(msg.message_id, None)
+    await query.edit_message_text(f"❌ Η ενέργεια ακυρώθηκε από τον @{uname}.")
+    await query.answer()
+
+# --- /notify Command ---
+async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not update.message:
+        return
+    try:
+        resp = supabase.table("users").select("user_id,username,first_name,models").eq("active", True).execute()
+        users = resp.data if resp and resp.data else []
+        if not users:
+            await update.message.reply_text("Δεν υπάρχουν ενεργοί chatters αυτή τη στιγμή.")
+            return
+        keyboard = []
+        row = []
+        for i, u in enumerate(users, 1):
+            uname = u.get("username") or u.get("first_name") or u.get("user_id")
+            row.append(dbg_btn(f"@{uname}", f"notifuser_{uname}"))
+            if i % 3 == 0 or i == len(users):
+                keyboard.append(row)
+                row = []
+        await update.message.reply_text(
+            "Επίλεξε chatter για notify:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Σφάλμα: {e}")
+
+# --- Notify User Callback ---
+async def notify_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    data = query.data
+    if not data.startswith("notifuser_"):
+        return
+    username = data[len("notifuser_"):]
+    # Fetch models for this user
+    try:
+        resp = supabase.table("users").select("models,first_name,user_id").eq("username", username).execute()
+        if not resp.data or len(resp.data) == 0:
+            await query.answer("Δεν βρέθηκε ο χρήστης.", show_alert=True)
+            return
+        user_data = resp.data[0]
+        models = user_data.get("models") or []
+        if isinstance(models, str):
+            try:
+                import json
+                models = json.loads(models)
+            except Exception:
+                models = []
+        if not models:
+            await query.edit_message_text(f"Ο χρήστης @{username} δεν έχει ενεργά models.")
+            return
+        keyboard = []
+        row = []
+        for i, model in enumerate(models, 1):
+            row.append(dbg_btn(model, f"notifymodel_{username}_{model}"))
+            if i % 3 == 0 or i == len(models):
+                keyboard.append(row)
+                row = []
+        await query.edit_message_text(
+            f"Ενεργά models του @{username}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    except Exception as e:
+        await query.edit_message_text(f"❌ Σφάλμα: {e}")
+
+# --- Notify Model Callback ---
+async def notify_model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data or not query.from_user:
+        return
+    data = query.data
+    if not data.startswith("notifymodel_"):
+        return
+    # notifymodel_{username}_{model}
+    try:
+        parts = data.split("_", 2)
+        if len(parts) < 3:
+            await query.answer("Σφάλμα callback.", show_alert=True)
+            return
+        username, model = parts[1], parts[2]
+        # Βρες το user_id του κατόχου
+        resp = supabase.table("users").select("user_id,first_name").eq("username", username).execute()
+        if not resp.data or len(resp.data) == 0:
+            await query.answer("Δεν βρέθηκε ο χρήστης.", show_alert=True)
+            return
+        owner_id = resp.data[0]["user_id"]
+        owner_first_name = resp.data[0].get("first_name") or username
+        trigger_username = query.from_user.username or query.from_user.first_name or str(query.from_user.id)
+        # Στείλε προσωπικό μήνυμα στον κάτοχο του model
+        accept_data = f"notifaccept_{username}_{model}_{trigger_username}"
+        reject_data = f"notifreject_{username}_{model}_{trigger_username}"
+        keyboard = InlineKeyboardMarkup([
+            [dbg_btn("✅ Αποδοχή", accept_data), dbg_btn("❌ Απόρριψη", reject_data)]
+        ])
+        try:
+            await context.bot.send_message(
+                chat_id=owner_id,
+                text=f"🔔 Ο χρήστης @{trigger_username} σε κάνει notify να βγεις από το model: {model}.\nΘέλεις να το αποδεχτείς;",
+                reply_markup=keyboard,
+                reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+            )
+            await query.answer("Έγινε notify στον χρήστη.", show_alert=True)
+        except Exception as ex:
+            await query.answer(f"Δεν μπόρεσα να στείλω μήνυμα στον χρήστη. {ex}", show_alert=True)
+    except Exception as e:
+        await query.answer(f"❌ Σφάλμα: {e}", show_alert=True)
+
+# --- Notify Accept/Reject Callback ---
+async def notify_accept_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data or not query.from_user:
+        return
+    data = query.data
+    try:
+        if data.startswith("notifaccept_"):
+            _, username, model, trigger = data.split("_", 3)
+            # Αφαίρεσε το model από τα models του χρήστη
+            resp = supabase.table("users").select("models,user_id,username").eq("username", username).execute()
+            if not resp.data or len(resp.data) == 0:
+                await query.answer("Δεν βρέθηκε ο χρήστης.", show_alert=True)
+                return
+            user_data = resp.data[0]
+            owner_id = user_data["user_id"]
+            owner_username = user_data.get("username") or username
+            models = user_data.get("models") or []
+            if isinstance(models, str):
+                try:
+                    import json
+                    models = json.loads(models)
+                except Exception:
+                    models = []
+            if model not in models:
+                await query.answer("Το model δεν είναι πλέον ενεργό.", show_alert=True)
+                return
+            new_models = [m for m in models if m != model]
+            supabase.table("users").upsert({"user_id": owner_id, "models": new_models, "active": bool(new_models), "start_time": None if not new_models else None}).execute()
+            # Βρες το user_id και models του trigger
+            resp_trig = supabase.table("users").select("user_id,models,username").eq("username", trigger).execute()
+            if resp_trig.data and len(resp_trig.data) > 0:
+                trigger_id = resp_trig.data[0]["user_id"]
+                trigger_models = resp_trig.data[0].get("models") or []
+                trigger_username = resp_trig.data[0].get("username") or trigger
+                if isinstance(trigger_models, str):
+                    try:
+                        import json
+                        trigger_models = json.loads(trigger_models)
+                    except Exception:
+                        trigger_models = []
+                # Προσθήκη του model στον trigger
+                new_trigger_models = list(set(trigger_models) | {model})
+                now = datetime.now(timezone.utc)
+                now_iso = now.isoformat()
+                now_str = now.strftime('%H:%M')
+                # Update trigger user
+                supabase.table("users").upsert({"user_id": trigger_id, "models": new_trigger_models, "active": True, "start_time": now_iso}).execute()
+                # Insert shift logs
+                supabase.table("shifts").insert({
+                    "user_id": trigger_id,
+                    "username": trigger_username,
+                    "models": [model],
+                    "start_time": now_iso,
+                    "on_time": now_iso,
+                    "active": True,
+                    "mode": "on"
+                }).execute()
+                supabase.table("shifts").insert({
+                    "user_id": owner_id,
+                    "username": owner_username,
+                    "models": [model],
+                    "start_time": now_iso,
+                    "on_time": now_iso,
+                    "active": False,
+                    "mode": "off"
+                }).execute()
+                # Group notifications (Shift ON/Shift OFF)
+                # Find group_id: use the first group the bot is in, or set a constant if you want
+                group_id = None
+                if hasattr(context.bot, 'chat_ids') and context.bot.chat_ids:
+                    group_id = list(context.bot.chat_ids)[0]
+                else:
+                    # Fallback: set your group id here
+                    group_id = -1000000000000  # <-- CHANGE THIS TO YOUR GROUP ID
+                # Duration: not tracked for single model, so just show '-'
+                msg_on = (
+                    f"🔛 Shift ON by @{trigger_username}\n"
+                    f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                    f"Models: {', '.join(trigger_models) if trigger_models else 'κανένα'}\n"
+                    f"➕ Νέα: {model}"
+                )
+                msg_off = (
+                    f"🔻 Shift OFF by @{owner_username}\n"
+                    f"🕒 {now_str}   ⏱ Duration: 0:00\n"
+                    f"Έκλεισαν: {', '.join(new_models) if new_models else 'κανένα'}\n"
+                    f"Εδωσε: {model}"
+                )
+                try:
+                    await context.bot.send_message(chat_id=group_id, text=msg_on)
+                    await context.bot.send_message(chat_id=group_id, text=msg_off)
+                except Exception as ex:
+                    print(f"DEBUG: Failed to send group notifications: {ex}")
+                await context.bot.send_message(
+                    chat_id=trigger_id,
+                    text=f"✅ Ο @{owner_username} αποδέχτηκε το notify και βγήκε από το model: {model}."
+                )
+            await query.edit_message_text(f"✅ Αποδέχτηκες το notify και βγήκες από το model: {model}.")
+        elif data.startswith("notifreject_"):
+            _, username, model, trigger = data.split("_", 3)
+            # Ενημέρωσε τον trigger user
+            resp_trig = supabase.table("users").select("user_id").eq("username", trigger).execute()
+            if resp_trig.data and len(resp_trig.data) > 0:
+                trigger_id = resp_trig.data[0]["user_id"]
+                await context.bot.send_message(
+                    chat_id=trigger_id,
+                    text=f"❌ Ο @{username} απέρριψε το notify για το model: {model}."
+                )
+            await query.edit_message_text(f"❌ Απέρριψες το notify για το model: {model}.")
+        else:
+            await query.answer("Άγνωστη ενέργεια.", show_alert=True)
+    except Exception as e:
+        await query.answer(f"❌ Σφάλμα: {e}", show_alert=True)
 
 # === Chatter name → Telegram handle mappings ===
 CHATTER_HANDLES = {
@@ -44,200 +1718,18 @@ CHATTER_HANDLES = {
     "Petridis": "@Bull056",
     "Riggers": "@riggersss",
 }
+# === Greek day names constant ===
+DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
 
-import logging
-import re
-import asyncio
-import sqlite3
-import os
-import sys
-from datetime import datetime, timedelta, time
-import pytz
-from telegram import (
-    InlineKeyboardButton, InlineKeyboardMarkup,
-    Update, MessageEntity, error as tg_error
-)
-
-# If handle_makeprogram_day is in another module, import it:
-# from your_module import handle_makeprogram_day
-from telegram.helpers import escape_markdown
-
-
-from telegram.ext import (
-    Application, CallbackQueryHandler,
-    CommandHandler, ContextTypes, MessageHandler, filters
-)
-import requests
-import csv
-import io
-import nest_asyncio
-nest_asyncio.apply()
-from telegram.error import RetryAfter
-
-from telegram.error import RetryAfter
-
-async def safe_send(bot, chat_id, text, **kwargs):
-    try:
-        return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-    except RetryAfter as e:
-        import asyncio
-        await asyncio.sleep(e.retry_after + 1)
-        return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-
-async def safe_edit(query, text, **kwargs):
-    try:
-        return await query.message.edit_text(text, **kwargs)
-    except Exception as e:
-        logging.error(f"Failed to edit message: {e}")
-
-# === COMMANDS HANDLERS ===
-
-# --- /getid command handler ---
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await update.message.reply_text(f"🆔 Το Telegram ID σου είναι: `{user.id}`", parse_mode="Markdown")
-
-# --- /register command handler ---
-async def handle_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    context.application.bot_data['notify_chat_id'] = chat_id
-    await update.message.reply_text(f"✅ Αυτή η chat ({chat_id}) καταγράφηκε για ειδοποιήσεις startup/shutdown.")
-
-
-async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Καλώς ήρθατε! Πληκτρολογήστε /help για να δείτε τις διαθέσιμες εντολές.Επισης αν δεν το εχεις κανει ηδη πηγαινε στην ομαδικη και γραψε /myid"
-    )
-
-# === CONFIG ===
-TOKEN    = "7140433953:AAEOEfkdFM3rkTu-eYn_S9aI3fY_EszkfT8"  # βάλ’ το δικό σου token αν θες
-TZ       = pytz.timezone("Europe/Athens")
-DB_FILE  = "bot.db"
-# Google Sheets API configuration
+# === Google Sheets API configuration ===
 SHEETS_API_KEY = "AIzaSyDBbGSp2ndjAVXLgGa_fs_GTn6EuFvtIno"
-SPREADSHEET_ID = "YOUR_SPREADSHEET_ID"  # replace with your spreadsheet ID
-SHEET_RANGE    = "Sheet1!A1:Z"          # adjust sheet name/range as needed
+SPREADSHEET_ID = "YOUR_SPREADSHEET_ID"  # Βάλε εδώ το πραγματικό ID
+SHEET_RANGE    = "Sheet1!A1:Z"
 
-# — Shift (βάρδια) μοντέλα —
-SHIFT_MODELS = [
-    "Lydia",
-    "Miss Frost",
-    "Lina",
-    "Frika",
-    "Iris",
-    "Electra",
-    "Nina",
-    "Eirini",
-    "Marilia",
-    "Areti",
-    "Silia",
-    "Iwanna",
-    "Elvina",
-    "Stefania",
-    "Elena",
-    "Natalia",
-    "Sabrina",
-    "Barbie",
-    "Antwnia",
-    "Κωνσταντίνα Mummy",
-    "Gavriela",
-    "Χριστίνα"
-]
+# === Timezone ===
+TZ = pytz.timezone("Europe/Athens")
 
-# — Mistake subsystem μοντέλα —
-MISTAKE_MODELS = [
-    "Lydia", "Miss Frost", "Lina", "Frika",
-    "Iris", "Electra", "Nina", "Roxana"
-]
-
-# — Logging —
-logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger()
-
-# — DB init —
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-c    = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS shifts (
-  user_id TEXT PRIMARY KEY,
-  models  TEXT,
-  mode    TEXT,
-  start_time TEXT
-)
-""")
-conn.commit()
-
-USER_BREAK_USED = {}  # uid -> total break minutes used in current shift
-MAX_BREAK_MINUTES = 45
-
-#
-# — In-memory state —
-user_names        = {}   # uid -> username
-user_status       = {}   # uid -> set(models)
-user_mode         = {}   # uid -> "on"/"off"
-USER_BREAK = {}
-on_times          = {}   # uid -> datetime
-
-mistake_status    = {}
-mistake_mode      = {}
-mistake_on_times  = {}
-
-message_owner     = {}   # (chat_id, msg_id) -> uid
-give_target       = {}   # (chat_id, msg_id) -> target_username
-give_selected     = {}   # (chat_id, msg_id) -> set(models)
-# Notify subsystem state
-notify_selected = {}  # (chat_id, msg_id) -> set(usernames)
-notify_models_selected = {}  # (chat_id, msg_id) -> (set(usernames), set(models))
-# Mapping for pending notify accept/reject callbacks
-notify_confirm_flow = {}  # (chat_id, msg_id) -> (initiator_uid, target_uname, set(models))
-
-# Live subsystem state
-LIVE_SELECTED = {}  # (chat_id, message_id) -> set(models)
-LIVE_MODE = {}      # (chat_id, message_id) -> "on" or "off"
-
-# Break subsystem
-break_timers          = {}  # uid -> datetime end
-break_active          = set()
-custom_break_requests = {}  # uid -> chat_id
-# Track users who have been notified for late break
-break_notified        = set()
-break_group_chat_ids  = {}  # uid -> group_chat_id
-
-# Give approval flow
-confirm_flow     = {}  # msg_id -> (giver, target, models_str)
-recipient_confirm_flow = {}  # mid -> (giver_username, recipient_id, models_str, chat_id)
-ALLOWED_APPROVERS = {"mikekrp", "tsaqiris"}
-
-# Predefined users mapping
-PREDEFINED_USERS = {
-    "Tsaqiris": 6431210056,
-    "mikekrp": 123456789,
-    "Evi_Nikolaidou": 234567890,
-}
-
-removed_map = {}  # uid -> set(models removed during OFF)
-
-# Pending acknowledgments for shift reminders (ack_id -> (chat_id, message_id, model, chatter_handle))
-pending_acks = {}
-
-
-def save_shift(uid: int):
-    mods = ",".join(user_status.get(uid, []))
-    mode = user_mode.get(uid, "")
-    st   = on_times.get(uid)
-    iso  = st.astimezone(TZ).isoformat() if st else ""
-    c.execute("""
-      INSERT INTO shifts(user_id,models,mode,start_time)
-      VALUES(?,?,?,?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        models=excluded.models,
-        mode=excluded.mode,
-        start_time=excluded.start_time
-    """, (str(uid), mods, mode, iso))
-    conn.commit()
-
-
-# --- Google Sheets helper ---
+# === Fetch values from Google Sheet ===
 def fetch_sheet_values():
     # Fetch CSV export from published Google Sheet
     csv_url = (
@@ -250,1720 +1742,9 @@ def fetch_sheet_values():
     reader = csv.reader(io.StringIO(data))
     return list(reader)
 
-
-def build_keyboard(models_list, sel_set):
-    kb, row = [], []
-    for i,m in enumerate(models_list):
-        txt = f"✅ {m}" if m in sel_set else m
-        row.append(InlineKeyboardButton(txt, callback_data=m))
-        if (i+1) % 3 == 0:
-            kb.append(row); row = []
-    if row:
-        kb.append(row)
-    kb.append([InlineKeyboardButton("✅ OK", callback_data="OK")])
-    return InlineKeyboardMarkup(kb)
-
-
-async def common_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    query = q
-    # Ensure uid is always set from the Telegram user
-    uid = update.effective_user.id
-    if not query:
-        return
-
-    # Restrict inline button presses to the original invoking user
-    key = (query.message.chat.id, query.message.message_id)
-    owner_uid = message_owner.get(key)
-    if owner_uid is not None and uid != owner_uid:
-        return await query.answer("❌ Τι πας να κανεις εκει; Αφου δεν ειναι δικο σου το command , μην γινεσαι μουνοπανο τωρα..", show_alert=True)
-
-    sel = query.data
-    if not sel:
-        await query.message.reply_text("Σφάλμα: Δεν βρέθηκε ημέρα.")
-        return
-    await query.answer()
-
-    # STEP 2 - SELECT TYPE (new)
-    sel = query.data if query else ""
-    if sel.startswith("mp_type_") and context.user_data.get("makeprog_step") == 2:
-        type_selected = sel.replace("mp_type_", "")
-        context.user_data["makeprog_type"] = type_selected
-        context.user_data["makeprog_step"] = 3
-
-        days = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
-        buttons = [[InlineKeyboardButton(day, callback_data=f"mp_day_{day}")] for day in days]
-        await query.edit_message_text("Επέλεξε ημέρα:", reply_markup=InlineKeyboardMarkup(buttons))
-        return
-
-    # STEP 3 - SELECT DAY
-    if not sel:
-        await query.message.reply_text("Σφάλμα: Δεν βρέθηκε ημέρα.")
-        return
-    if sel.startswith("mp_day_"):
-        day = sel.replace("mp_day_", "")
-        context.user_data["makeprog_day"] = day
-        context.user_data["makeprog_step"] = 4
-
-        buttons = [
-            [InlineKeyboardButton("08:00", callback_data="mp_start_08:00"),
-             InlineKeyboardButton("09:00", callback_data="mp_start_09:00")],
-            [InlineKeyboardButton("10:00", callback_data="mp_start_10:00"),
-             InlineKeyboardButton("11:00", callback_data="mp_start_11:00")],
-            [InlineKeyboardButton("12:00", callback_data="mp_start_12:00"),
-             InlineKeyboardButton("Ρεπό", callback_data="mp_off")],
-        ]
-        await query.edit_message_text(f"Επέλεξες: {day}\nΤώρα επίλεξε ώρα έναρξης:", reply_markup=InlineKeyboardMarkup(buttons))
-        return
-    # --- Shift reminder acknowledgment handler ---
-    if q.data.startswith("ack_"):
-        await q.answer()
-        # Extract notification key and remove pending ack
-        msg_id = q.message.message_id
-        ack_data = pending_acks.pop(msg_id, None)
-        if not ack_data:
-            return
-        user_id, group_chat_id, ack_model, handle = ack_data
-        # Notify the user privately
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ Ευχαριστούμε που επιβεβαίωσες την υπενθύμιση για το μοντέλο {ack_model}."
-            )
-        except Exception as e:
-            logger.error(f"Error sending DM ack confirmation: {e}")
-        # Ειδοποίηση στο group για το callback "ΕΙΔΑ" (live notifications)
-        username = q.from_user.username or "user"
-        model = ack_model
-        try:
-            await context.application.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"✅ Ο χρήστης @{username} είδε την ειδοποίηση για το μοντέλο {model}."
-            )
-        except Exception as e:
-            logger.error(f"Error sending live notification to group: {e}")
-        # Notify the registered group chat (legacy, keep for backwards compat)
-        notify_chat_id = context.application.bot_data.get('notify_chat_id')
-        if notify_chat_id:
-            try:
-                await context.bot.send_message(
-                    chat_id=notify_chat_id,
-                    text=f"✅ Ο @{q.from_user.username} είδε την υπενθύμιση για το μοντέλο {ack_model}."
-                )
-            except Exception as e:
-                logger.error(f"Error notifying group on ack: {e}")
-
-        # Notify each admin privately
-        for admin in ALLOWED_APPROVERS:
-            admin_id = KNOWN_USERS.get(admin)
-            if admin_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=f"🔔 Ο @{q.from_user.username} επιβεβαίωσε την υπενθύμιση για το μοντέλο {ack_model}."
-                    )
-                except Exception as e:
-                    logger.error(f"Error notifying admin {admin} on ack: {e}")
-
-        return
-    # Only the original invoking user may interact with this command's inline buttons
-    key = (q.message.chat.id, q.message.message_id)
-    owner_uid = message_owner.get(key)
-    if owner_uid is not None and uid != owner_uid:
-        return await q.answer("❌ Τι πας να κανεις εκει; Αφου δεν ειναι δικο σου το command , μην γινεσαι μουνοπανο τωρα..", show_alert=True)
-    sel = q.data
-    chat = q.message.chat
-    # --- Restart Bot via inline button ---
-    if q.data == "restart_bot":
-        # Restrict to admins only (check Telegram admin status)
-        chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id)
-        if chat_member.status not in ["administrator", "creator"]:
-            await update.callback_query.answer("🚫 Μόνο οι admins μπορούν να κάνουν επανεκκίνηση του bot.", show_alert=True)
-            return
-        # Optionally, also restrict to ALLOWED_APPROVERS usernames
-        if q.from_user.username not in ALLOWED_APPROVERS:
-            return await q.answer("❌ Δεν έχετε δικαίωμα.", show_alert=True)
-        await q.message.delete()
-        sent = await q.message.chat.send_message("♻️ Επανεκκίνηση bot...")
-        await sent.delete()
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-    # --- Start confirmation for Evi ---
-    if q.data.startswith("evi_"):
-        try:
-            await q.answer()
-        except tg_error.TelegramError:
-            pass
-        choice = q.data.split("_", 1)[1]
-        # Only accept shrimp ("Γαρίδες σαγανάκι")
-        if choice != "shrimp":
-            # Show a simple alert on wrong choice
-            return await q.answer("❌ Λανθασμένη επιλογή.", show_alert=True)
-        # Fun welcome message for Evi
-        await q.message.delete()
-        await context.bot.send_message(
-            chat_id=q.message.chat.id,
-            text="🦐 Γεια σου Εύη! Δεν ήταν και τόσο δύσκολο, ε; !euh για τις εντολές."
-        )
-        return
-    try:
-        await q.answer()
-    except tg_error.TelegramError:
-        pass
-
-    # --- Live subsystem handling ---
-    lm_key = (q.message.chat.id, q.message.message_id)
-    if lm_key in LIVE_MODE:
-        mode = LIVE_MODE[lm_key]
-        selset = LIVE_SELECTED[lm_key]
-        # If the selection is a model with the prefix "live_model_" or "liveoff_model_", extract only the model name
-        if sel.startswith("live_model_"):
-            model_name = sel.replace("live_model_", "")
-            # Notify the group chat as soon as a model is selected live
-            try:
-                await context.bot.send_message(
-                    chat_id=GROUP_CHAT_ID,
-                    text=f"🎥 Το μοντέλο <b>{model_name}</b> κάνει live!",
-                    parse_mode="HTML"
-                )
-            except tg_error.BadRequest as e:
-                logger.error(f"Live notify failed for group {GROUP_CHAT_ID}: {e}")
-            # Μόλις επιλεχθεί ένα μοντέλο, στείλε προσωπικό μήνυμα στον chatter του μοντέλου με κουμπί "Το είδα" και σταμάτα εδώ
-            # Βρες τον chatter που έχει αυτό το μοντέλο (είτε σε ON είτε σε OFF)
-            owner = None
-            for uid_, mods in user_status.items():
-                if model_name in mods:
-                    owner = uid_
-                    break
-            if owner:
-                text = f"🎥 Το μοντέλο <b>{model_name}</b> κάνει live!"
-                try:
-                    ack_callback = f"ack_live_on_{model_name}_{datetime.now(TZ).date().isoformat()}"
-                    keyboard = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("👍 Το είδα", callback_data=ack_callback)
-                    ]])
-                    msg = await context.bot.send_message(
-                        chat_id=owner,
-                        text=text,
-                        parse_mode="HTML",
-                        reply_markup=keyboard
-                    )
-                    handle = f"@{user_names.get(owner, '')}"
-                    group_chat_id = context.application.bot_data.get('notify_chat_id')
-                    pending_acks[msg.message_id] = (owner, group_chat_id, model_name, handle)
-                    asyncio.create_task(check_ack(context.application, owner, msg.message_id, model_name, handle))
-                except Exception:
-                    pass
-            await q.message.delete()
-            # Send confirmation in this chat that the model is live
-            await context.bot.send_message(
-                chat_id=q.message.chat.id,
-                text=f"✅ Καταγράφηκε live για το μοντέλο {model_name}."
-            )
-            # Δεν επαναπροβάλουμε το inline keyboard με όλα τα μοντέλα
-            return
-        elif mode == "off":
-            # Toggle selection of models to stop live
-            selset = LIVE_SELECTED[lm_key]
-            if sel != "OK":
-                selset.symmetric_difference_update({sel})
-                # rebuild keyboard showing only currently live models
-                # filtered_models is in scope from earlier
-                live_models = [m for m in filtered_models]
-                try:
-                    return await q.message.edit_reply_markup(reply_markup=build_keyboard(live_models, selset))
-                except Exception:
-                    return
-            # OK pressed: apply live-off to selected models
-            await q.message.delete()
-            for model_name in selset:
-                # stop live for each selected model
-                # notify group chat
-                await context.bot.send_message(
-                    chat_id=GROUP_CHAT_ID,
-                    text=f"✖️ Το μοντέλο <b>{model_name}</b> σταμάτησε το live.",
-                    parse_mode="HTML"
-                )
-            return
-        # Only show the inline keyboard for model selection on first call, not after confirmation
-        if sel != "OK":
-            selset.symmetric_difference_update({sel})
-            try:
-                return await q.message.edit_reply_markup(reply_markup=build_keyboard(SHIFT_MODELS, selset))
-            except Exception:
-                return
-        # OK pressed: notify chatter(s)
-        await q.message.delete()
-        # Send DM and group notifications for each selected model
-        for model in selset:
-            # Find the owner of the model
-            owner = None
-            for uid_, mods in user_status.items():
-                if model in mods:
-                    owner = uid_
-                    break
-            # Prepare notification text
-            notif_text = (
-                f"🎥 Το μοντέλο <b>{model}</b> κάνει live!"
-                if mode == "on"
-                else f"✖️ Το μοντέλο <b>{model}</b> σταμάτησε το live."
-            )
-            # Send private DM to the owner if found
-            if owner:
-                try:
-                    await context.bot.send_message(
-                        chat_id=owner,
-                        text=notif_text,
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
-            # Send notification to the main group chat
-            try:
-                await context.bot.send_message(
-                    chat_id=GROUP_CHAT_ID,
-                    text=notif_text,
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
-        # Instead of showing the model selection menu again, just send a confirmation message
-        if selset:
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text=f"✅ Καταγράφηκε το live για το/τα μοντέλο/α: {', '.join(selset)}"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat.id,
-                text="Δεν επιλέχθηκε κανένα μοντέλο για live."
-            )
-        # cleanup
-        del LIVE_MODE[lm_key]
-        del LIVE_SELECTED[lm_key]
-        return
-    # --- Notify subsystem inline handling: step 1 – select users ---
-    if key in notify_selected:
-        if sel.startswith("notify_") and sel not in ("notify_OK", "notify_cancel"):
-            users = {sel.replace("notify_", "")}
-            await q.message.delete()
-            # determine all models the selected user currently has
-            allowed_models = set()
-            for uname in users:
-                uid2 = KNOWN_USERS.get(uname.lower())
-                if uid2:
-                    allowed_models.update(user_status.get(uid2, set()))
-            # if user has no models, inform that their shift has ended
-            if not allowed_models:
-                return await q.answer(
-                    "❌ Ο χρήστης δεν έχει κανένα μοντέλο σε βάρδια (η βάρδιά του έχει τελειώσει).",
-                    show_alert=True
-                )
-            # build and send model-selection keyboard
-            model_list = sorted(allowed_models)
-            model_buttons = [InlineKeyboardButton(m, callback_data=f"notifym_{m}") for m in model_list]
-            model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
-            model_rows.append([
-                InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
-                InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
-            ])
-            msg2 = await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
-                text="🔔 Επιλέξτε μοντέλα για την ειδοποίηση:",
-                reply_markup=InlineKeyboardMarkup(model_rows)
-            )
-            message_owner[(msg2.chat.id, msg2.message_id)] = uid
-            notify_models_selected[(msg2.chat.id, msg2.message_id)] = (users, set())
-            return
-        if sel == "notify_cancel":
-            ...
-        if sel == "notify_OK":
-            # proceed to model selection
-            users = notify_selected.pop(key, set())
-            await q.message.delete()
-            # προσδιορισμός όλων των μοντέλων που έχει ο επιλεγμένος χρήστης
-            allowed_models = set()
-            for uname in users:
-                uid2 = KNOWN_USERS.get(uname.lower())
-                if uid2:
-                    allowed_models.update(user_status.get(uid2, set()))
-            # αν δεν έχει μοντέλα, η βάρδιά του έχει τελειώσει
-            if not allowed_models:
-                return await q.answer(
-                    "❌ Ο χρήστης δεν έχει κανένα μοντέλο σε βάρδια (η βάρδιά του έχει τελειώσει).",
-                    show_alert=True
-                )
-            model_list = sorted(allowed_models)
-            model_buttons = [InlineKeyboardButton(m, callback_data=f"notifym_{m}") for m in model_list]
-            model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
-            model_rows.append([
-                InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
-                InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
-            ])
-            msg2 = await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
-                text="🔔 Επιλέξτε μοντέλα για την ειδοποίηση:",
-                reply_markup=InlineKeyboardMarkup(model_rows)
-            )
-            message_owner[(msg2.chat.id, msg2.message_id)] = uid
-            notify_models_selected[(msg2.chat.id, msg2.message_id)] = (users, set())
-            return
-            # Prevent selecting users who are not in shift
-        if sel not in ("notify_cancel", "notify_OK"):
-            uname = sel.replace("notify_", "")
-            uid2 = KNOWN_USERS.get(uname)
-            if uid2 is None:
-                return await q.answer("❌ Ο χρήστης δεν βρέθηκε.", show_alert=True)
-            if user_mode.get(uid2) != "on":
-                return await q.answer("❌ Ο χρήστης δεν έχει ενεργή βάρδια.", show_alert=True)
-        # toggle user selection
-        user_set = notify_selected[key]
-        uname = sel.replace("notify_", "")
-        if uname in user_set:
-            user_set.remove(uname)
-        else:
-            user_set.add(uname)
-        # rebuild user-selection keyboard
-        user_buttons = []
-        for name, handle in CHATTER_HANDLES.items():
-            keyu = handle.lstrip("@")
-            text = f"✅ {name}" if keyu in user_set else name
-            user_buttons.append(InlineKeyboardButton(text, callback_data=f"notify_{keyu}"))
-        user_rows = [user_buttons[i:i+3] for i in range(0, len(user_buttons), 3)]
-        user_rows.append([
-            InlineKeyboardButton("✅ OK", callback_data="notify_OK"),
-            InlineKeyboardButton("❌ Cancel", callback_data="notify_cancel"),
-        ])
-        return await q.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(user_rows))
-
-    # --- Notify subsystem inline handling: step 2 – select models ---
-    if key in notify_models_selected:
-        users, model_set = notify_models_selected[key]
-        if sel == "notifym_cancel":
-            notify_models_selected.pop(key, None)
-            return await q.message.edit_text("❌ Ειδοποίηση ακυρώθηκε.")
-        if sel == "notifym_OK":
-            notify_models_selected.pop(key, None)
-            await q.message.delete()
-            mentions = ", ".join(f"@{u}" for u in users)
-            # send interactive DMs to each user
-            for uname in users:
-                uid2 = KNOWN_USERS.get(uname.lower())
-                if uid2 and model_set:
-                    try:
-                        keyboard = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("✅ Αποδοχή", callback_data=f"notify_accept_{uname}"),
-                            InlineKeyboardButton("❌ Απόρριψη", callback_data=f"notify_reject_{uname}")
-                        ]])
-                        dm_msg = await context.bot.send_message(
-                            chat_id=uid2,
-                            text=f"🔔 Ο χρήστης @{update.effective_user.username} θέλει να βγείτε από τα μοντέλα: {', '.join(model_set)}",
-                            reply_markup=keyboard
-                        )
-                        notify_confirm_flow[(dm_msg.chat.id, dm_msg.message_id)] = (update.effective_user.id, uname, model_set)
-                    except Exception:
-                        pass
-            return await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
-                text=f"🛎 Εστάλησαν ειδοποιήσεις σε {mentions} για μοντέλα: {', '.join(model_set)} από @{update.effective_user.username}"
-            )
-        # toggle model selection
-        mname = sel.replace("notifym_", "")
-        if mname in model_set:
-            model_set.remove(mname)
-        else:
-            model_set.add(mname)
-        # rebuild model-selection keyboard based on selected users' active models
-        allowed_models = set()
-        for uname in users:
-            uid2 = KNOWN_USERS.get(uname.lower())
-            if uid2 and user_mode.get(uid2) == "on":
-                allowed_models.update(user_status.get(uid2, set()))
-        sorted_models = sorted(allowed_models)
-        if not sorted_models:
-            # if no models available, notify and cancel
-            await q.answer("❌ Κανένα μοντέλο διαθέσιμο για τον επιλεγμένο χρήστη.", show_alert=True)
-            return
-        model_buttons = []
-        for m in sorted_models:
-            txt = f"✅ {m}" if m in model_set else m
-            model_buttons.append(InlineKeyboardButton(txt, callback_data=f"notifym_{m}"))
-        model_rows = [model_buttons[i:i+3] for i in range(0, len(model_buttons), 3)]
-        model_rows.append([
-            InlineKeyboardButton("✅ OK", callback_data="notifym_OK"),
-            InlineKeyboardButton("❌ Cancel", callback_data="notifym_cancel"),
-        ])
-        return await q.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(model_rows))
-
-    # --- Handle notify accept/reject callbacks ---
-    if sel.startswith("notify_accept_") or sel.startswith("notify_reject_"):
-        action, uname = sel.split("_", 1)[1].split("_", 1)
-        key2 = (q.message.chat.id, q.message.message_id)
-        info = notify_confirm_flow.pop(key2, None)
-        if not info:
-            return await q.answer("❌ Πληροφορία ειδοποίησης δεν βρέθηκε.", show_alert=True)
-        initiator_uid, target_uname, models = info
-        target_uid = q.from_user.id
-        expected_uid = KNOWN_USERS.get(target_uname.lower())
-        if target_uid != expected_uid:
-            return await q.answer("❌ Δεν είσαι ο σωστός παραλήπτης.", show_alert=True)
-        # Process acceptance
-        if action == "accept":
-            # Shift OFF models from target
-            removed = set(models)
-            user_status[target_uid].difference_update(removed)
-            if not user_status[target_uid]:
-                user_mode[target_uid] = "off"
-                on_times.pop(target_uid, None)
-            save_shift(target_uid)
-            # Shift ON models for initiator
-            user_status.setdefault(initiator_uid, set()).update(removed)
-            user_mode[initiator_uid] = "on"
-            if initiator_uid not in on_times:
-                on_times[initiator_uid] = datetime.now(TZ)
-            save_shift(initiator_uid)
-            # Send channel notifications
-            now = datetime.now(TZ)
-            # Duration calculations
-            d_off = now - on_times.get(target_uid, now)
-            h_off = d_off.seconds // 3600
-            m_off = (d_off.seconds % 3600) // 60
-            dur_off = f"{h_off}h {m_off}m"
-            d_on = now - on_times.get(initiator_uid)
-            h_on = d_on.seconds // 3600
-            m_on = (d_on.seconds % 3600) // 60
-            dur_on = f"{h_on}h {m_on}m" if h_on or m_on else "μόλις ξεκίνησε την βάρδια"
-
-            # OFF notification for target with remaining models
-            removed = set(models)
-            # compute remaining models
-            remaining_models = user_status.get(target_uid, set())
-            remaining_text = (
-                f"\n✅ Παραμένει σε: {', '.join(sorted(remaining_models))}"
-                if remaining_models else "\n🚩 Τελείωσε την βάρδιά του!"
-            )
-            off_text = (
-                f"🔴 Shift OFF by @{target_uname}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur_off}\n"
-                f"🗑 Αφαίρεσε: {', '.join(sorted(removed)) or 'καμία'}"
-                f"{remaining_text}"
-            )
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                text=off_text
-            )
-
-            # ON notification for initiator with full model list and new additions
-            all_models = user_status.get(initiator_uid, set())
-            prev_models = context.application.bot_data.setdefault("previous_models_map", {}).get(initiator_uid, set())
-            new_models = all_models - prev_models
-            new_text = (
-                f"\n➕ Νέα: {', '.join(sorted(new_models))}"
-                if new_models else ""
-            )
-            on_text = (
-                f"🔛 Shift ON by @{user_names.get(initiator_uid)}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur_on}\n"
-                f"Models: {', '.join(sorted(all_models)) or 'Δεν επελέγησαν μοντέλα'}"
-                f"{new_text}"
-            )
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                text=on_text
-            )
-            # update stored previous models
-            context.application.bot_data["previous_models_map"][initiator_uid] = set(all_models)
-
-            # Notify both users
-            await safe_send(context.bot, target_uid, f"✅ Τα μοντέλα {', '.join(sorted(removed))} αφαιρέθηκαν από τη βάρδιά σου.")
-            await safe_send(context.bot, initiator_uid, f"✅ Τα μοντέλα {', '.join(sorted(removed))} προστέθηκαν στη βάρδιά σου.")
-        else:
-            # Rejection: notify initiator
-            await safe_send(
-                context.bot,
-                initiator_uid,
-                f"❌ Ο @{target_uname} απέρριψε την ειδοποίηση για μοντέλα: {', '.join(models)}."
-            )
-        return
-
-
-    # --- Mistake subsystem ---
-    if mistake_mode.get(uid) in ("on", "off"):
-        selset = mistake_status.setdefault(uid, set())
-        if sel != "OK":
-            if mistake_mode[uid] == "on":
-                selset.symmetric_difference_update({sel})
-            else:
-                selset.discard(sel)
-            # Determine which models to show: all on mistake ON, only active on mistake OFF
-            if mistake_mode[uid] == "on":
-                keyboard_models = MISTAKE_MODELS
-            else:
-                keyboard_models = sorted(selset)
-            try:
-                return await q.message.edit_reply_markup(reply_markup=build_keyboard(keyboard_models, selset))
-            except RetryAfter as e:
-                logger.warning(f"Flood control on edit_reply_markup: retry after {e.retry_after}s")
-                return
-            except Exception as e:
-                logger.error(f"Error editing reply_markup: {e}")
-                return
-        # OK finalize
-        await q.message.delete()
-        now = datetime.now(TZ)
-        st = mistake_on_times.get(uid)
-        dur = ""
-        if st:
-            d = now - st
-            h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
-            dur = f"{h}h {m}m"
-        selset = mistake_status.get(uid, set())
-        if mistake_mode[uid] == "off":
-            if not selset:
-                txt = (
-                    f"🔴 Mistake Βάρδια OFF by @{user_names[uid]}\n"
-                    f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                    "🚩 Τελείωσε η mistake βάρδιά του!"
-                )
-            else:
-                txt = (
-                    f"🔴 Mistake Βάρδια OFF by @{user_names[uid]}\n"
-                    f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                    f"Models: {', '.join(sorted(selset)) or 'κανένα'}"
-                )
-            mistake_mode.pop(uid, None)
-            try:
-                await context.bot.send_message(chat.id, txt)
-            except RetryAfter as e:
-                logger.warning(f"Flood control on send_message: retry after {e.retry_after}s")
-            except Exception as e:
-                logger.error(f"Error sending message: {e}")
-            return
-        else:
-            txt = (
-                f"✅ Mistake Βάρδια ON by @{user_names[uid]}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                f"Models: {', '.join(sorted(selset)) or 'κανένα'}"
-            )
-            try:
-                await context.bot.send_message(chat.id, txt)
-            except RetryAfter as e:
-                logger.warning(f"Flood control on send_message: retry after {e.retry_after}s")
-            except Exception as e:
-                logger.error(f"Error sending message: {e}")
-            return
-
-    # --- Acceptgive recipient confirmation (move up for early return) ---
-    sel = q.data
-    if sel.startswith("acceptgive_"):
-        uid = q.from_user.id
-        chat = q.message.chat
-        mid = int(sel.split("_")[1])
-        data = recipient_confirm_flow.pop(mid, None)
-        if not data:
-            return await context.bot.send_message(chat.id, "❌ Δεν βρέθηκε η πληροφορία της απόδοσης.")
-        giver, tid, models, original_chat = data
-        if uid != tid:
-            return await q.answer("❌ Δεν είσαι ο παραλήπτης.", show_alert=True)
-
-        user_names[tid] = q.from_user.username or f"id_{tid}"
-        user_mode[tid] = "on"
-        user_status.setdefault(tid, set()).update(models.split(", "))
-        on_times[tid] = datetime.now(TZ)
-        save_shift(tid)
-        context.application.bot_data.setdefault("previous_models_map", {})[tid] = set(models.split(", "))
-
-        # αφαιρέσει από giver
-        giver_uid = next((k for k,v in user_names.items() if v == giver), None)
-        if giver_uid:
-            user_status.setdefault(giver_uid, set()).difference_update(models.split(", "))
-            if not user_status[giver_uid]:
-                user_mode[giver_uid] = "off"
-                on_times.pop(giver_uid, None)
-            removed_map[giver_uid] = set(models.split(", "))
-            save_shift(giver_uid)
-
-        now = datetime.now(TZ)
-        dur = "Μόλις ξεκίνησε την βάρδια"
-        added_info = f"\n➕ Νέα: {', '.join(sorted(models.split(', ')))}"
-        shift_text = (
-            f"🔛 Shift ON by @{user_names[tid]}\n"
-            f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-            f"Models: {', '.join(models.split(', '))}{added_info}"
-        )
-        await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-            text=shift_text
-        )
-
-        if giver_uid:
-            remaining_models = user_status.get(giver_uid, set())
-            removed_models = ", ".join(models.split(", "))
-            dur = ""
-            st = on_times.get(giver_uid)
-            if st:
-                d = now - st
-                h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
-                dur = f"{h}h {m}m"
-            if not remaining_models:
-                off_txt = (
-                    f"🔴 Shift OFF by @{giver}\n"
-                    f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                    f"🎁Έδωσε : {removed_models}\n"
-                    "🚩 Τελείωσε την βάρδιά του!"
-                )
-            else:
-                off_txt = (
-                    f"🔴 Shift OFF by @{giver}\n"
-                    f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                    f"🎁Έδωσε : {removed_models}\n"
-                    f"✅ Παραμένει σε: {', '.join(remaining_models)}"
-                )
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                text=off_txt
-            )
-
-        return await context.bot.send_message(chat_id=tid, text=f"✅ Έκανες αποδοχή για: {models}")
-
-    user_mode.setdefault(uid, "off")
-
-    # --- Break buttons ---
-    if sel.startswith("break_"):
-        _, val = sel.split("_",1)
-        owner_id = message_owner.get((chat.id, q.message.message_id))
-        if owner_id is not None and owner_id != uid:
-            try:
-                return await q.answer("❌ Δεν έχεις δικαίωμα να το επιλέξεις.", show_alert=True)
-            except tg_error.TelegramError:
-                return
-        # --- Validate break time before starting a predefined break ---
-        if val.isdigit():
-            requested = int(val)
-            used = USER_BREAK_USED.get(uid, 0)
-            remaining = MAX_BREAK_MINUTES - used
-            if requested > remaining:
-                try:
-                    await q.answer(f"❌ Δεν έχεις διαθέσιμα {requested} λεπτά.\n📏 Υπόλοιπο: {remaining}ʼ.", show_alert=True)
-                except tg_error.TelegramError:
-                    pass
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=f"❌ Δεν μπορείς να πάρεις {requested}ʼ διάλειμμα, σου απομένουν μόνο {remaining}ʼ."
-                )
-                return
-        if val=="cancel":
-            break_timers.pop(uid, None); break_active.discard(uid)
-            return await q.message.edit_text("❌ Το διάλειμμά σου ακυρώθηκε.")
-        if val=="custom":
-            custom_break_requests[uid] = chat.id
-            res = await q.message.edit_text("⏱️ Πληκτρολόγησε πόσα λεπτά θέλεις για διάλειμμα:")
-            message_owner[(q.message.chat.id, q.message.message_id)] = uid
-            used = USER_BREAK_USED.get(uid, 0)
-            rem = MAX_BREAK_MINUTES - used
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID,
-                text=f"⌛️ Σου απομένουν {rem} λεπτά διαλείμματος."
-            )
-            return res
-        minutes = int(val)
-        context.user_data['break_duration'] = minutes
-        context.user_data['break_start_time'] = datetime.now(TZ)
-        end = datetime.now(TZ) + timedelta(minutes=minutes)
-        break_timers[uid] = end
-        break_group_chat_ids[uid] = chat.id
-        break_active.add(uid)
-        # Schedule break end notification
-        context.job_queue.run_once(
-            end_break,
-            when=timedelta(minutes=minutes),
-            data={"uid": uid}
-        )
-        return await q.message.edit_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Να εισαι πισω στην ώρα σου αλλιως ξερεις.. προστιμο")
-
-    # --- Custom break text handler elsewhere ---
-
-    # --- Give subsystem ---
-    key = (chat.id, q.message.message_id)
-    if key in give_target:
-        if sel!="OK":
-            selset = give_selected[key]
-            selset.symmetric_difference_update({sel})
-            # Only show user's current models, not all models
-            return await q.message.edit_reply_markup(reply_markup=build_keyboard(user_status.get(uid, set()), selset))
-        # OK -> approval request
-        selset = give_selected.pop(key, set())
-        target = give_target.pop(key)
-        giver = q.from_user.username
-        models = ", ".join(selset) or "κανένα"
-        await q.message.delete()
-        from telegram.helpers import escape_markdown
-        escaped_models = escape_markdown(models, version=2)
-        escaped_target = escape_markdown(target, version=2)
-        cm = await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-            text=f"🔔 Πατήστε ✅ για να επιβεβαιώσετε μοντέλα *{escaped_models}* προς {escaped_target}:",
-            parse_mode="MarkdownV2"
-        )
-        confirm_flow[cm.message_id] = (giver, target, models)
-        markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Επιβεβαίωση", callback_data=f"confirm_{cm.message_id}"),
-            InlineKeyboardButton("❌ Απόρριψη",     callback_data=f"reject_{cm.message_id}")
-        ]])
-        return await cm.edit_reply_markup(reply_markup=markup)
-
-    # --- Confirmation callbacks ---
-    if sel.startswith(("confirm_","reject_")):
-        # Only allow specific admins to confirm or reject gives
-        approver = q.from_user.username
-        action, mid = sel.split("_",1)
-        if approver not in ALLOWED_APPROVERS:
-            # alert the user
-            await q.answer("❌ Δεν είσαι admin, τι κάνεις εκεί;", show_alert=True)
-            # notify all admins about the unauthorized press
-            for admin_username in ALLOWED_APPROVERS:
-                admin_id = KNOWN_USERS.get(admin_username)
-                if admin_id:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=f"⚠️ Ο @{approver} προσπάθησε να {action} στο give."
-                    )
-            return
-        mid = int(mid)
-        values = confirm_flow.pop(mid, None)
-        if values is None:
-            return await context.bot.send_message(chat.id, "❌ Δεν βρέθηκε η πληροφορία της απόδοσης.")
-        giver, target, models = values
-        try:
-            # Lookup recipient ID by lowercase username key
-            username_key = target.lstrip("@").lower()
-            tid = KNOWN_USERS.get(username_key)
-            if tid is not None:
-                class DummyUser:
-                    def __init__(self, id, username): self.id, self.username = id, username
-                user_obj = DummyUser(tid, username_key)
-            else:
-                full_target = f"@{target}" if not target.startswith("@") else target
-                try:
-                    chat_member = await context.bot.get_chat_member(chat.id, full_target)
-                    user_obj = chat_member.user
-                    tid = user_obj.id
-                except tg_error.TelegramError:
-                    return await context.bot.send_message(chat.id, f"❌ Δεν βρέθηκε ο χρήστης {target}.")
-        except tg_error.TelegramError:
-            return await context.bot.send_message(chat.id, f"❌ Δεν βρέθηκε ο χρήστης {target}.")
-        await q.message.delete()
-        recipient_id = user_obj.id  # Ensure recipient_id assigned before use and user_obj is correct
-        if action == "confirm":
-            # Βήμα 1: Admin approved → τώρα ζητάμε και του recipient
-            recipient_confirm_flow[mid] = (giver, recipient_id, models, chat.id)
-            await context.bot.send_message(
-                chat_id=recipient_id,
-                text=f"🎁 Ο @{giver} θέλει να σου μεταβιβάσει μοντέλα: {models}.\nΠατήστε αποδοχή:",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Αποδοχή", callback_data=f"acceptgive_{mid}")
-                ]])
-            )
-            # Notify the designated channel that admins have approved and we're waiting on the recipient
-            await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                text=f"🔔 Οι admins αποδέχτηκαν το αίτημά σου @{giver} και περιμένουμε από τον @{target} να πατήσει Αποδοχή για να γίνει το give."
-            )
-            return
-        else:
-            return await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                text=f"❌ Απορρίφθηκε η απόδοση σε {target}."
-            )
-
-
-    # --- Shift subsystem ---
-    # --- Make Program: handle mp_type_dayoff callback ---
-    # Implements: set shift_type=dayoff, confirmed True, step=5, show keyboard
-    if sel == "mp_type_dayoff" and context.user_data.get("makeprog_step") == 2:
-        day = context.user_data.get('current_day')
-        if not day:
-            return
-        context.user_data.setdefault('program', {})
-        context.user_data['program'][day] = {
-            'shift_type': 'dayoff',
-            'hours': '—',
-            'confirmed': True
-        }
-        context.user_data['makeprog_step'] = 5
-        prog = context.user_data['program']
-        keyboard = [
-            [InlineKeyboardButton("🆗 Τέλος, στείλτο", callback_data="mp_send")],
-            [InlineKeyboardButton("🔍 Προεπισκόπηση", callback_data="mp_preview")],
-            [InlineKeyboardButton("❌ Ακύρωση", callback_data="mp_cancel")]
-        ]
-        for i, d in enumerate(DAYS):
-            label = f"🟢 {d}" if d in prog and prog[d].get("confirmed") else d
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"mp_day_{i}")])
-        return await safe_send(context.bot, q.message.chat_id, "📅 Θες να συνεχίσεις;", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    # --- Make Program: handle mp_day_X callback ---
-    elif sel.startswith("mp_day_"):
-        if context.user_data.get("makeprog_step") != 3:
-            return
-        day = sel.replace("mp_day_", "")
-        context.user_data["current_day"] = day
-        await handle_makeprogram_day(update, context)
-        return
-    selset = user_status.setdefault(uid, set())
-    if user_mode[uid] == "on":
-        if sel != "OK":
-            taken_models = {model for u, mods in user_status.items() if u != uid and user_mode.get(u) == "on" for model in mods}
-            if sel in taken_models:
-                try:
-                    return await q.answer("❌ Το μοντέλο είναι ήδη σε χρήση από άλλον χρήστη.", show_alert=True)
-                except tg_error.TelegramError:
-                    return
-            if sel in selset:
-                try:
-                    return await q.answer("❌ Δεν μπορείς να αφαιρέσεις μοντέλα ενώ είσαι ON. Χρησιμοποίησε /off.", show_alert=True)
-                except tg_error.TelegramError:
-                    return
-            selset.add(sel)
-            available_models = [m for m in SHIFT_MODELS if m not in taken_models]
-            new_markup = build_keyboard(available_models, selset)
-            # Compare button texts manually to avoid "Message is not modified"
-            old_buttons = q.message.reply_markup.inline_keyboard
-            new_buttons = new_markup.inline_keyboard
-            if [[btn.text for btn in row] for row in old_buttons] == [[btn.text for btn in row] for row in new_buttons]:
-                return
-            try:
-                return await q.message.edit_reply_markup(reply_markup=new_markup)
-            except RetryAfter as e:
-                logger.warning(f"Flood control on edit_reply_markup: retry after {e.retry_after}s")
-                return
-            except Exception as e:
-                logger.error(f"Error editing reply_markup: {e}")
-                return
-        elif sel == "OK":
-            # Check if at least one model is selected before confirming shift ON
-            if not selset:
-                return await context.bot.send_message(chat.id, "❌ Πρέπει να επιλέξεις τουλάχιστον ένα μοντέλο για να ξεκινήσεις βάρδια.")
-            await q.message.delete()
-            now = datetime.now(TZ)
-            st = on_times.get(uid)
-            # Duration logic
-            dur = ""
-            if st:
-                d = now - st
-                h = divmod(int(d.total_seconds()), 3600)[0]
-                m = divmod(int(d.total_seconds()) % 3600, 60)[0]
-                if h == 0 and m == 0:
-                    dur = "μόλις ξεκίνησε την βάρδια"
-                else:
-                    dur = f"{h}h {m}m"
-            # Use exactly the models the user selected, without filtering out "taken" sets
-            selset = set(user_status.get(uid, set()))
-            # Read previous_models as-is
-            previous_models = set(context.application.bot_data.get("previous_models_map", {}).get(uid, set()))
-            added_models = selset - previous_models
-            context.application.bot_data.setdefault("previous_models_map", {})[uid] = selset.copy()
-            added_info = ""
-            if added_models:
-                added_info = f"\n➕ Νέα: {', '.join(sorted(added_models))}"
-            else:
-                added_info = ""
-            txt = (
-                f"🔛 Shift ON by @{user_names[uid]}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                f"Models: {', '.join(selset) or 'Δεν επελεξε models'}{added_info}"
-            )
-            try:
-                await context.bot.send_message(
-                    chat_id=TARGET_CHAT_ID,
-                    reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-                    text=txt
-                )
-            except RetryAfter as e:
-                logger.warning(f"Flood control on send_message: retry after {e.retry_after}s")
-            except Exception as e:
-                logger.error(f"Error sending message: {e}")
-            save_shift(uid)
-            return
-    else:  # off mode
-        if sel != "OK":
-            # Track removed models
-            if sel in selset:
-                selset.remove(sel)
-                removed_map.setdefault(uid, set()).add(sel)
-            elif sel in removed_map.get(uid, set()):
-                selset.add(sel)
-                removed_map[uid].discard(sel)
-            else:
-                try:
-                    return await q.answer("❌ Δεν είσαι σε αυτό.", show_alert=True)
-                except tg_error.TelegramError:
-                    return
-            # Only edit reply markup if changed
-            new_markup = build_keyboard(sorted(selset), selset)
-            if q.message.reply_markup == new_markup:
-                return  # Avoid "Message is not modified" error
-            return await q.message.edit_reply_markup(reply_markup=new_markup)
-        # OK finalize
-        await q.message.delete()
-        now = datetime.now(TZ)
-        st = on_times.get(uid)
-        dur = ""
-        if st:
-            d = now - st
-            h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
-            dur = f"{h}h {m}m"
-        # Restore previous simpler /off message behavior
-        if not selset:
-            txt = (
-                f"🔴 Shift OFF by @{user_names[uid]}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                "🚩 Τελείωσε την βάρδιά του!"
-            )
-        else:
-            removed_models = removed_map.get(uid, set())
-            txt = (
-                f"🔴 Shift OFF by @{user_names[uid]}\n"
-                f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-                f"Models: {', '.join(selset)}\n"
-                f"🗑 Αφαίρεσε: {', '.join(sorted(removed_models)) or 'καμία'}"
-            )
-        await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-            text=txt
-        )
-        save_shift(uid)
-        if user_mode[uid] == "off" and not selset:
-            on_times.pop(uid, None)
-        return
-
-
-# === --- === DAY PROGRAM INTERACTIVE KEYBOARD LOGIC === --- ===
-
-# --- ΕΝΑΡΞΗ /makeprogram ---
-async def mp_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Start interactive day program entry for 7 days
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    uid = update.effective_user.id
-    context.user_data["mp_days"] = [None] * 7
-    context.user_data["mp_stage"] = 0
-    await send_mp_day_prompt(update.effective_chat.id, context, 0, context)
-
-# Alias for backward compatibility
-handle_makeprogram_start = mp_start
-
-
-#
-# Νέα υλοποίηση handle_makeprogram_day
-#
-DAYS = {
-    "mp_day_mon": "Δευτέρα",
-    "mp_day_tue": "Τρίτη",
-    "mp_day_wed": "Τετάρτη",
-    "mp_day_thu": "Πέμπτη",
-    "mp_day_fri": "Παρασκευή",
-    "mp_day_sat": "Σάββατο",
-    "mp_day_sun": "Κυριακή",
-}
-
-async def handle_makeprogram_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    sel = query.data
-
-    if sel not in DAYS:
-        await safe_edit(query.message, "Σφάλμα: Δεν βρέθηκε ημέρα.")
-        return
-
-    day = DAYS[sel]
-    context.user_data.setdefault("program", {})
-    if day in context.user_data["program"]:
-        await safe_edit(query.message, f"📅 Έχεις ήδη καταχωρήσει την {day}.")
-        return
-
-    context.user_data["current_day"] = day
-    context.user_data["program"][day] = {}
-
-    keyboard = [
-        [InlineKeyboardButton("🌞 Πρωινή", callback_data="mp_shift_morning")],
-        [InlineKeyboardButton("🌆 Απογευματινή", callback_data="mp_shift_evening")],
-        [InlineKeyboardButton("🛌 Ρεπό", callback_data="mp_shift_dayoff")],
-        [InlineKeyboardButton("🔙 Πίσω", callback_data="mp_back_to_days")],
-    ]
-    await safe_edit(query.message, f"📆 Επιλογή βάρδιας για *{day}*:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-
-
-
-# --- safe_edit helper as requested ---
-async def safe_edit(message, text, **kwargs):
-    try:
-        return await message.edit_text(text, **kwargs)
-    except Exception as e:
-        print(f"[safe_edit] Error: {e}")
-        try:
-            return await message.reply_text(text, **kwargs)
-        except Exception as err:
-            print(f"[safe_edit fallback] Failed: {err}")
-
-
-async def send_mp_day_prompt(chat_id, context, day_index, ctx):
-    DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
-    day_name = DAYS[day_index]
-    keyboard = [
-        [InlineKeyboardButton("✅ Επιβεβαίωση", callback_data=f"mp_end_{day_index}")],
-        [InlineKeyboardButton("🛏️ Day OFF", callback_data=f"mp_type_dayoff_{day_index}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await ctx.bot.send_message(chat_id=chat_id, text=f"🔹 Εισάγετε πρόγραμμα για {day_name}:", reply_markup=reply_markup)
-
-
-async def handle_mp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    uid = q.from_user.id
-    data = q.data
-    # Handle mp_end_ and mp_type_dayoff_
-    if data.startswith("mp_end_") or data.startswith("mp_type_dayoff_"):
-        if data.startswith("mp_end_"):
-            day_index = int(data.split("_")[-1])
-            context.user_data["mp_days"][day_index] = "Επιβεβαιώθηκε"
-        elif data.startswith("mp_type_dayoff_"):
-            day_index = int(data.split("_")[-1])
-            context.user_data["mp_days"][day_index] = "Day OFF"
-        # Advance to next day or finish
-        next_day = day_index + 1
-        if next_day < 7:
-            await q.answer()
-            await q.message.edit_text(f"✅ Καταχωρήθηκε για {DAYS[day_index]}. Προχωράμε στην επόμενη ημέρα...")
-            await send_mp_day_prompt(q.message.chat.id, context, next_day, context)
-        else:
-            # All 7 days done, show final keyboard (must be interactive)
-            await q.answer()
-            # Build summary text and interactive keyboard
-            summary_lines = []
-            for idx, val in enumerate(context.user_data["mp_days"]):
-                day = DAYS[idx]
-                v = val or "–"
-                summary_lines.append(f"{day}: {v}")
-            summary = "\n".join(summary_lines)
-            # Build keyboard: OK, Preview, all 7 days (with 🟢 if confirmed)
-            kb = []
-            kb.append([InlineKeyboardButton("🆗 Τέλος, στείλτο", callback_data="mp_submit")])
-            kb.append([InlineKeyboardButton("🔍 Προεπισκόπηση", callback_data="mp_preview")])
-            days_btns = []
-            for idx, val in enumerate(context.user_data["mp_days"]):
-                btn_text = f"{DAYS[idx]}"
-                if val:
-                    btn_text = f"🟢 {btn_text}"
-                days_btns.append(InlineKeyboardButton(btn_text, callback_data=f"mp_edit_{idx}"))
-            # 7 days, group as one row or two
-            kb.append(days_btns)
-            reply_markup = InlineKeyboardMarkup(kb)
-            await q.message.edit_text(
-                text=f"✅ Επιβεβαίωση προγράμματος:\n\n{summary}\n\nΕπίλεξε αν θες αλλαγή ή στείλτο:",
-                reply_markup=reply_markup
-            )
-        return
-
-
-async def handle_custom_break_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid not in custom_break_requests:
-        return
-    text = update.message.text.strip()
-    try:
-        minutes = int(text)
-        if minutes <= 0 or minutes > 45:
-            raise ValueError
-    except ValueError:
-        return await update.message.reply_text("❌ Δώσε αριθμό λεπτών από 1 έως 45.")
-    used = USER_BREAK_USED.get(uid, 0)
-    remaining = MAX_BREAK_MINUTES - used
-    if minutes > remaining:
-        return await update.message.reply_text(f"❌ Δεν έχεις διαθέσιμα {minutes} λεπτά.\n📏 Υπόλοιπο: {remaining}ʼ.")
-    context.user_data['break_start_time'] = datetime.now(TZ)
-    end = datetime.now(TZ)+timedelta(minutes=minutes)
-    break_timers[uid] = end
-    break_active.add(uid)
-    break_group_chat_ids[uid] = custom_break_requests[uid]
-    await update.message.reply_text(f"☕ Διάλειμμα {minutes}ʼ ξεκίνησε! Θα σε υπενθυμίσω.")
-    del custom_break_requests[uid]
-
-
-# === COMMANDS HANDLERS ===
-
-
-async def handle_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u, uid = update.effective_user, update.effective_user.id
-    print(f"[DEBUG] User {uid} triggered /on")
-    prev_models = user_status.get(uid)
-    # Only if starting a new shift (no models before), reset breaks and record shift start time
-    if not prev_models:
-        USER_BREAK[uid] = 45
-        USER_BREAK_USED[uid] = 0
-        on_times[uid] = datetime.now(TZ)
-    user_names[uid] = u.username
-    user_mode[uid]  = "on"
-    user_status.setdefault(uid, set())
-    previous_models = user_status[uid].copy()
-    context.application.bot_data.setdefault("previous_models_map", {})[uid] = previous_models
-    save_shift(uid)
-
-    # ✅ Μοντέλα σε χρήση από άλλους
-    taken_models = {model for uid_, models in user_status.items() if user_mode.get(uid_) == "on" and uid_ != uid for model in models}
-    available_models = [m for m in SHIFT_MODELS if m not in taken_models]
-
-    try: await update.message.delete()
-    except: pass
-    msg = await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=f"🔛 *Shift ON!* Σε μοντέλα εισαι σημερα;",
-        reply_markup=build_keyboard(available_models, user_status.get(uid, set())),
-        parse_mode="Markdown"
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-
-# --- /onall handler ---
-async def handle_onall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u, uid = update.effective_user, update.effective_user.id
-    user_names[uid] = u.username
-    user_mode[uid]  = "on"
-    on_times[uid]   = datetime.now(TZ)
-    # assign all shift models
-    user_status[uid] = set(SHIFT_MODELS)
-    # reset break usage
-    USER_BREAK_USED[uid] = 0
-    # record previous models map
-    context.application.bot_data.setdefault("previous_models_map", {})[uid] = set(SHIFT_MODELS)
-    save_shift(uid)
-    # build the Shift ON message
-    now = datetime.now(TZ)
-    dur = "μόλις ξεκίνησε την βάρδια"
-    models_text = ", ".join(SHIFT_MODELS)
-    txt = (
-        f"🔛 Shift ON ΟΛΑ by @{user_names[uid]}\n"
-        f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-        f"Models: {models_text}"
-    )
-    await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=txt
-    )
-
-async def handle_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u, uid = update.effective_user, update.effective_user.id
-    user_names[uid] = u.username
-    user_mode[uid] = "off"
-    removed_map[uid] = set()
-    if not user_status.get(uid, set()):
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-            text="❌ Αφου δεν εχεις models ρε φρουτο.. τι κανεις;... Πρώτα χρησιμοποίησε /on."
-        )
-    try:
-        await update.message.delete()
-    except:
-        pass
-    msg = await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text="🔴 *Shift OFF!* Αφαίρεσε μοντέλα:",
-        reply_markup=build_keyboard(sorted(user_status.get(uid,set())), user_status.get(uid,set())),
-        parse_mode="Markdown"
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-
-# --- /say command: bot echoes whatever you write ---
-async def handle_say(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Delete the user’s original message
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    # Grab everything after the command
-    text = update.message.text.partition(' ')[2]
-    if not text:
-        return
-
-    # Send it as the bot
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=text
-    )
-    
-# --- /offall handler ---
-async def handle_offall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    user_names[uid] = update.effective_user.username
-    user_mode[uid] = "off"
-    user_status[uid] = set()
-    removed_map[uid] = set()
-    save_shift(uid)
-
-    now = datetime.now(TZ)
-    st = on_times.get(uid)
-    dur = ""
-    if st:
-        d = now - st
-        h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
-        dur = f"{h}h {m}m"
-    on_times.pop(uid, None)
-
-    txt = (
-        f"🔴 Shift OFF by @{user_names[uid]}\n"
-        f"🕒 {now.strftime('%H:%M')}   ⏱ Duration: {dur}\n"
-        "🚩 Τελείωσε την βάρδιά του!"
-    )
-    await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=txt
-    )
-
-async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if user_mode.get(uid) != "on":
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
-            text="❌ Δεν είσαι σε βάρδια."
-        )
-    sel = user_status.get(uid, set())
-    if not sel:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
-            text="❌ Πως θα το κανεις αυτο χωρις μοντέλα;Ο Einstein μπροστα σου ειναι τιποτα"
-        )
-    st = on_times.get(uid)
-    dur = ""
-    if st:
-        d = datetime.now(TZ) - st
-        h, m = divmod(int(d.total_seconds()), 3600)[0], divmod(int(d.total_seconds()) % 3600, 60)[0]
-        dur = f"\n⏱ {h}h {m}m"
-    return await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=STATUS_REPLY_TO_MESSAGE_ID,
-        text=f"📋 Models: {', '.join(sel)}{dur}"
-    )
-
-async def handle_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if user_mode.get(uid) != "on":
-        return await update.message.reply_text("❌ Δεν είσαι σε βάρδια.")
-    # extract first token after command as mention if present, else fallback to reply_to_message
-    parts = update.message.text.strip().split()
-    if len(parts) >= 2 and parts[1].startswith('@'):
-        target_username = parts[1].lstrip('@')
-    elif update.message.reply_to_message:
-        tu = update.message.reply_to_message.from_user
-        target_username = tu.username or ""
-    else:
-        return await update.message.reply_text("❌ Πως θα το δωσεις αμα δεν λες σε ποιον;Ε ρε που εμπλεξα..")
-
-    username_key = target_username.lower()
-    recipient_id = KNOWN_USERS.get(username_key)
-    if not recipient_id:
-        return await update.message.reply_text(f"❌ Δεν βρηκα τον @{target_username}.")
-
-    # Filter models: only allow giving models the user owns
-    owned_models = user_status.get(uid, set())
-    if not owned_models:
-        return await update.message.reply_text("❌ Δεν έχεις μοντέλα για να δώσεις.")
-    # Re-filter models after pressing OK (when called via callback_query)
-    if update.callback_query:
-        uid = update.effective_user.id
-        owned_models = user_status.get(uid, set())
-        return await update.callback_query.message.edit_reply_markup(
-            reply_markup=build_keyboard(sorted(owned_models), set())
-        )
-    from_u = update.effective_user.username
-    msg = await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=f"🎁 Ο @{from_u} θέλει να δώσει μοντέλο σε @{target_username}. Επιλέξτε:",
-        reply_markup=build_keyboard(sorted(owned_models), set())
-    )
-    give_target[(msg.chat.id, msg.message_id)] = target_username
-    give_selected[(msg.chat.id, msg.message_id)] = set()
-    message_owner[(msg.chat.id, msg.message_id)] = update.effective_user.id
-
-async def handle_mistake_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u,uid = update.effective_user, update.effective_user.id
-    user_names[uid] = u.username
-    mistake_mode[uid] = "on"
-    mistake_on_times[uid] = datetime.now(TZ)
-    mistake_status.setdefault(uid,set())
-    try: await update.message.delete()
-    except: pass
-    msg = await context.bot.send_message(
-        update.effective_chat.id,
-        text="🎯 *Mistake ON!* Δωσε πονο , σε ποια θα μπεις;",
-        reply_markup=build_keyboard(MISTAKE_MODELS, mistake_status[uid]),
-        parse_mode="Markdown"
-    )
-    message_owner[(msg.chat.id,msg.message_id)] = uid
-
-async def handle_mistake_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u,uid = update.effective_user, update.effective_user.id
-    user_names[uid] = u.username
-    mistake_mode[uid] = "off"
-    # Check if user has any active mistake models before proceeding
-    if not mistake_status.get(uid):
-        return await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌Ρε Ευη τι πας να κανεις χωρις να εχεις models.. οχι και εσυ..."
-        )
-    try: await update.message.delete()
-    except: pass
-    active_models = sorted(mistake_status.get(uid, set()))
-    msg = await context.bot.send_message(
-        update.effective_chat.id,
-        text="🔴 *Mistake OFF!* Αφαίρεσε μοντέλα:",
-        reply_markup=build_keyboard(active_models, mistake_status.get(uid, set())),
-        parse_mode="Markdown"
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-
-async def handle_mistake_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    sel = mistake_status.get(uid,set())
-    if not sel:
-        return await context.bot.send_message(update.effective_chat.id, "❌ Αφου δεν εχεις...")
-    st = mistake_on_times.get(uid)
-    dur = ""
-    if st:
-        d = datetime.now(TZ)-st; h,m = divmod(int(d.total_seconds()),3600)[0], divmod(int(d.total_seconds())%3600,60)[0]
-        dur = f"\n⏱ {h}h {m}m"
-    await context.bot.send_message(update.effective_chat.id, f"📋 Mistake: {', '.join(sel)}{dur}")
-
-async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = TARGET_CHAT_ID
-    # Determine image path
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    local_path = os.path.join(script_dir, 'gunzoagency.png')
-    bundled_path = '/mnt/data/gunzoagency.png'
-    image_path = local_path if os.path.isfile(local_path) else bundled_path
-
-    help_message = (
-        "# 🤖 Βοήθεια Bot\n\n"
-        "🆔 **ΠΡΩΤΗ ΦΟΡΑ;** Κάνε `/getid` για να λάβεις το Telegram ID σου.\n\n"
-        "---\n\n"
-        "## 🔄 Βάρδια  \n"
-        "- `/on` – Ξεκινά τη βάρδιά σου (επιλογή μοντέλων)  \n"
-        "- `/off` – Τερματίζει βάρδια (αφαίρεση μοντέλων)  \n"
-        "- `/offall` – Τερματίζει πλήρως τη βάρδιά σου  \n"
-        "- `/status` – Δείχνει τα μοντέλα που έχεις τώρα  \n\n"
-        "## 🎁 Μεταβίβαση  \n"
-        "- `/give` – Δίνει μοντέλα σε άλλο χρήστη (επιλογή & δέσμευση μοντέλων)  \n\n"
-        "## ⏱️ Διάλειμμα  \n"
-        "- `/break` – Ξεκινά διάλειμμα (15ʼ, 20ʼ, … ή custom)  \n"
-        "- `/back` – Επιστροφή από διάλειμμα (υπολογίζει διάρκεια)  \n"
-        "- `/break_balance` – Υπόλοιπο χρόνου διαλείμματος  \n\n"
-        "## 📋 Γενικά  \n"
-        "- `/active` – Ποιοι χρήστες είναι αυτή τη στιγμή σε βάρδια  \n"
-        "- `/remaining` – Πόσα λεπτά διαλείμματος σου απομένουν  \n"
-        "- `/help` – Αυτό το μενού βοήθειας  \n" 
-        "## 🧑‍💻 Program  \n"
-        "- `/myprogram –  Σου δειχνει το δικο σου προγραμμα της ημερας   \n"
-        "- `/onprogram –  Βλεπει σε ποια models εισαι στο προγραμμα και κανει on αυτοματα   \n"
-    )
-
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-    restart_button = InlineKeyboardMarkup([[InlineKeyboardButton("♻️ Restart Bot", callback_data="restart_bot")]])
-    if os.path.isfile(image_path):
-        try:
-            with open(image_path, 'rb') as photo_file:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_file,
-                    caption=help_message,
-                    parse_mode="Markdown",
-                    reply_markup=restart_button,
-                    reply_to_message_id=HELP_REPLY_TO_MESSAGE_ID
-                )
-                return
-        except Exception as e:
-            logger.warning(f"Could not send help image with caption: {e}")
-
-    # fallback to text-only if image fails
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=help_message,
-        parse_mode="Markdown",
-        reply_markup=restart_button,
-        reply_to_message_id=HELP_REPLY_TO_MESSAGE_ID
-    )
-
-# Secret handler for !euh
-async def handle_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Μόνο για Mistake commands
-    txt = (
-        "/mistake_on - Ξεκινά mistake shift\n"
-        "/mistake_off - Τερματίζει mistake shift\n"
-        "/mistake_status - Δείχνει τρέχον mistake status"
-    )
-    await context.bot.send_message(update.effective_chat.id, txt)
-
-
-    # --- /notify handler ---
-async def handle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid     = update.effective_user.id
-
-    buttons = []
-    for name, handle in CHATTER_HANDLES.items():
-        key = handle.lstrip("@")  # username χωρίς '@'
-        uid2 = KNOWN_USERS.get(key.lower())
-        # μόνο αν ο χρήστης είναι σε shift
-        if uid2 is None or user_mode.get(uid2) != "on":
-            continue
-        buttons.append(InlineKeyboardButton(name, callback_data=f"notify_{key}"))
-
-    if not buttons:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
-            text="❌ Δεν υπάρχει κανένας χρήστης σε βάρδια προς ειδοποίηση."
-        )
-
-    # chunk into rows of 3
-    rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
-    # add OK / Cancel
-    rows.append([
-        InlineKeyboardButton("✅ OK",     callback_data="notify_OK"),
-        InlineKeyboardButton("❌ Cancel", callback_data="notify_cancel"),
-    ])
-
-    msg = await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=NOTIFY_REPLY_TO_MESSAGE_ID,
-        text="🔔 Επιλέξτε χρήστες για ειδοποίηση:",
-        reply_markup=InlineKeyboardMarkup(rows)
-    )
-    # restrict to invoker
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-    notify_selected[(msg.chat.id, msg.message_id)] = set()
-
-# --- /live handler ---
-async def handle_live(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # only allow admins to use /live
-    if update.effective_user.username not in ALLOWED_APPROVERS:
-        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα να χρησιμοποιήσετε αυτή την εντολή.")
-    uid = update.effective_user.id
-    # Allowed models for live
-    allowed_models = ["Lina", "Nina", "Frost", "Frika", "Barbie", "Sabrina", "Natalia"]
-    # Find all models currently ON shift that are in allowed_models
-    live_models = set()
-    for models in user_status.values():
-        live_models.update(models)
-    # Only those in allowed_models
-    filtered_models = [m for m in allowed_models if m in live_models]
-    if not filtered_models:
-        return await update.message.reply_text("Δεν υπάρχει model on αυτή τη στιγμή.")
-    keyboard = [[InlineKeyboardButton(model, callback_data=f"live_model_{model}")] for model in filtered_models]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎥 Επιλογή μοντέλου που κάνει live:",
-        reply_markup=reply_markup
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-    # Mark live mode for this message
-    LIVE_MODE[(msg.chat.id, msg.message_id)] = "on"
-    LIVE_SELECTED[(msg.chat.id, msg.message_id)] = set()
-
-async def handle_liveoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.username not in ALLOWED_APPROVERS:
-        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα να χρησιμοποιήσετε αυτή την εντολή.")
-    uid = update.effective_user.id
-
-    # Determine which models are currently live (i.e., in shift and allowed for live off)
-    allowed_live_models = ["Lina", "Nina", "Miss Frost", "Frika", "Iris", "Electra", "Barbie", "Sabrina", "Natalia"]
-    live_models = set()
-    for mods in user_status.values():
-        live_models.update(mods)
-    models = [m for m in allowed_live_models if m in live_models]
-    if not models:
-        return await update.message.reply_text("Δεν υπάρχει κανένα μοντέλο σε live αυτή τη στιγμή.")
-
-    keyboard = []
-    for m in models:
-        keyboard.append([InlineKeyboardButton(m, callback_data=f"liveoff_model_{m}")])
-    keyboard.append([InlineKeyboardButton("✅ OK", callback_data="OK")])
-
-    msg = await update.message.reply_text(
-        "✖️ Επιλογή μοντέλου(ων) για τερματισμό live – αφού επιλέξεις, πάτησε OK:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-    LIVE_MODE[(msg.chat.id, msg.message_id)] = "off"
-    LIVE_SELECTED[(msg.chat.id, msg.message_id)] = set()
-
-async def handle_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Restrict /active to admins only
-    try:
-        member = await context.bot.get_chat_member(
-            chat_id=TARGET_CHAT_ID,
-            user_id=update.effective_user.id
-        )
-        if member.status not in ("administrator", "creator"):
-            return await context.bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
-                text="🚫 Stalker τι κανεις; Μόνο οι admins μπορούν να χρησιμοποιήσουν αυτή την εντολή. Ντροπη σου"
-            )
-    except Exception:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
-            text="🚫 Δεν μπορώ να επαληθεύσω δικαιώματα."
-        )
-    now = datetime.now(TZ)
-    active_items = []
-    for uid, mode in user_mode.items():
-        if mode == "on":
-            username = user_names.get(uid, 'user')
-            mods = user_status.get(uid, set())
-            mods_text = ', '.join(mods) or 'κανένα'
-            st = on_times.get(uid)
-            dur_text = ''
-            if st:
-                d = now - st
-                hours = d.seconds // 3600
-                minutes = (d.seconds % 3600) // 60
-                dur_text = f' ⏱ {hours}h {minutes}m'
-            active_items.append((username, mods_text, dur_text))
-    if not active_items:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
-            text='Τους πηρε ο υπνος.. παει η μπισνα'
-        )
-    lines = [f"{idx}. @{username} : {mods}{dur}" for idx, (username, mods, dur) in enumerate(active_items, start=1)]
-    total = len(active_items)
-    message = "<b>Active Users:</b>\n" + "\n".join(lines) + f"\n\n<b>Σύνολο:</b> {total}"
-    await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=ACTIVE_REPLY_TO_MESSAGE_ID,
-        text=message,
-        parse_mode="HTML"
-    )
-
-async def handle_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    end = break_timers.get(uid)
-    if not end or uid not in break_active:
-        return await update.message.reply_text("❌ Δεν είσαι σε διάλειμμα.")
-    remaining = max(0, int((end - datetime.now(TZ)).total_seconds())//60)
-    if remaining>0:
-        return await update.message.reply_text(f"⏳ Σου απομένουν {remaining}′ διάλειμμα.")
-    else:
-        return await update.message.reply_text("Το διάλειμμά σου τελείωσε , γυρνα πισω στην ομαδικη με /back")
-
-
-# --- /show_program handler ---
-async def handle_show_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = fetch_sheet_values()
-    if not rows:
-        return await update.message.reply_text("❌ Ρε τσακιρη το προγραμμα....")
-    days = rows[0][1:]
-    # build schedule mapping day -> list of (model, morning, afternoon)
-    schedule = {day: [] for day in days}
-    for row in rows[1:]:
-        model = row[0].strip()
-        for idx, cell in enumerate(row[1:]):
-            cell_text = cell.strip()
-            if not cell_text:
-                continue
-            parts = [p.strip() for p in cell_text.splitlines() if p.strip()]
-            morning = ""
-            afternoon = ""
-            for p in parts:
-                m = re.match(r"(\d{1,2}):", p)
-                if m:
-                    start_hour = int(m.group(1))
-                    if start_hour >= 18:
-                        afternoon = p
-                    else:
-                        morning = p
-                else:
-                    # fallback: assign to morning if not matched
-                    if not morning:
-                        morning = p
-                    else:
-                        afternoon = p
-            schedule[days[idx]].append((model, morning, afternoon))
-
-    # Only show today's schedule
-    today_idx = datetime.now(TZ).weekday()
-    if today_idx < 0 or today_idx >= len(days):
-        return await update.message.reply_text("❌ Σφάλμα στον προσδιορισμό της ημέρας.")
-    day_name = days[today_idx]
-    entries = schedule.get(day_name, [])
-    header = f"📋 Πρόγραμμα για σήμερα (<b>{day_name}</b>)"
-    lines = []
-    if not entries:
-        lines.append("–")
-    else:
-        for model, morning, afternoon in entries:
-            entry = f"<b>{model}</b>:"
-            if morning:
-                entry += f"\n  Πρωινή βάρδια: {morning}"
-            if afternoon:
-                entry += f"\n  Απογευματινή βάρδια: {afternoon}"
-            lines.append(entry)
-    text = header + "\n" + ("\n".join(lines) if lines else "–")
-    await update.message.reply_text(text, parse_mode="HTML")
-
-# --- /weekly_program handler ---
-async def handle_weekly_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = fetch_sheet_values()
-    if not rows or len(rows) < 2:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=WEEKLY_REPLY_TO_MESSAGE_ID,
-            text="❌ Το sheet είναι άδειο ή δεν βρέθηκαν δεδομένα στο sheet."
-        )
-    days = rows[0][1:]
-    # build schedule per day
-    schedule = {day: [] for day in days}
-    for row in rows[1:]:
-        model = row[0].strip()
-        for idx, cell in enumerate(row[1:]):
-            cell_text = cell.strip()
-            if not cell_text:
-                continue
-            parts = [p.strip() for p in cell_text.splitlines() if p.strip()]
-            # combine parts into one line
-            schedule[days[idx]].append(f"{model}: {' | '.join(parts)}")
-    # Send each day separately to avoid message length limits
-    for day in days:
-        day_entries = schedule.get(day, [])
-        if day_entries:
-            msg = f"<b>{day}</b>\n" + "\n".join([f"• {e}" for e in day_entries])
-        else:
-            msg = f"<b>{day}</b>\n• –"
-        await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=WEEKLY_REPLY_TO_MESSAGE_ID,
-            text=msg,
-            parse_mode="HTML"
-        )
+# === /myprogram handler ===
+from telegram import Update
+from telegram.ext import ContextTypes
 
 async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
@@ -1976,28 +1757,27 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
     if not chatter_name:
         return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρήσει σωστά το handle σου."
+            chat_id=update.effective_chat.id,
+            text="❌ Το πρόγραμμα σου δεν βρέθηκε. Βεβαιώσου ότι έχεις καταχωρήσει σωστά το handle σου.",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
         )
 
     rows = fetch_sheet_values()
     if not rows or len(rows) < 2:
         return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Δεν βρέθηκαν δεδομένα στο sheet."
+            chat_id=update.effective_chat.id,
+            text="❌ Δεν βρέθηκαν δεδομένα στο sheet.",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
         )
 
     days = rows[0][1:]
     today_idx = datetime.now(TZ).weekday()
     if today_idx < 0 or today_idx >= len(days):
         return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-            text="❌ Σφάλμα στον προσδιορισμό της ημέρας."
+            chat_id=update.effective_chat.id,
+            text="❌ Σφάλμα στον προσδιορισμό της ημέρας.",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
         )
-
     # Collect assignments as tuples (model_name, entry_text)
     assignments = []
     for row in rows[1:]:
@@ -2027,8 +1807,7 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Determine shift type
         try:
             start_hour = int(time_range.split(":")[0])
-        except ValueError:
-            # Skip entries without a leading numeric hour
+        except ValueError: # Skip entries without a leading numeric hour
             continue
         shift_type = "πρωινή βάρδια" if start_hour < 18 else "απογευματινή βάρδια"
         lines.append(f"{time_range}  {model_name} ({shift_type})")
@@ -2036,733 +1815,1358 @@ async def handle_myprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send result
     message = header + "\n" + ("\n".join(lines) if lines else "– Δεν έχεις βάρδια.")
     await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=MYPROGRAM_REPLY_TO_MESSAGE_ID,
-        text=message
+        chat_id=update.effective_chat.id,
+        text=message,
+        reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
     )
 
-# --- /onprogram handler ---
-async def handle_onprogram(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    username = u.username or ""
-    chatter_name = None
-    for name, handle in CHATTER_HANDLES.items():
-        if handle and handle.lstrip("@").lower() == username.lower():
-            chatter_name = name
-            break
-    if not chatter_name:
-        return await update.message.reply_text("❌ Δεν βρέθηκε το όνομά σου στο πρόγραμμα. Έλεγξε το handle σου.")
-
+# --- /weekly_program handler ---
+async def handle_weekly_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = fetch_sheet_values()
     if not rows or len(rows) < 2:
-        return await update.message.reply_text("❌ Πρόβλημα ανάκτησης προγράμματος.")
-
+        return await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Το sheet είναι άδειο ή δεν βρέθηκαν δεδομένα στο sheet.",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
     days = rows[0][1:]
-    today_idx = datetime.now(TZ).weekday()
-    if today_idx < 0 or today_idx >= len(days):
-        return await update.message.reply_text("❌ Σφάλμα προσδιορισμού ημέρας.")
-
-    scheduled_models = set()
+    # build schedule per day, group by model
+    schedule = {day: {} for day in days}  # day -> {model: [shifts]}
     for row in rows[1:]:
         model = row[0].strip()
-        cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
-        if chatter_name in cell:
-            scheduled_models.add(model)
-
-    if not scheduled_models:
-        return await update.message.reply_text("❌ Δεν βρέθηκαν μοντέλα στο πρόγραμμά σου σήμερα.")
-
-    uid = u.id
-    user_names[uid] = username
-    user_mode[uid] = "on"
-    on_times[uid] = datetime.now(TZ)
-    user_status[uid] = scheduled_models
-    USER_BREAK_USED[uid] = 0
-    context.application.bot_data.setdefault("previous_models_map", {})[uid] = scheduled_models
-    save_shift(uid)
-
-    models_text = ", ".join(sorted(scheduled_models))
-    txt = (
-        f"🔛 Shift ON by @{username} (από /onprogram)\n"
-        f"🕒 {datetime.now(TZ).strftime('%H:%M')}   ⏱ Duration: μόλις ξεκίνησε\n"
-        f"Models: {models_text}"
-    )
-    await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        reply_to_message_id=TARGET_REPLY_TO_MESSAGE_ID,
-        text=txt
-    )
-
-# --- /break_balance handler ---
-async def handle_break_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    used = USER_BREAK_USED.get(uid, 0)
-    remaining = max(0, MAX_BREAK_MINUTES - used)
-    await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        text=f"📏 Έχεις {remaining} λεπτά διαθέσιμα για διάλειμμα.",
-        reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-    )
-
-# --- /break handler ---
-async def handle_break(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not user_status.get(uid) and mistake_mode.get(uid) != "on":
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text="❌ Πως θα παρεις διαλλειμα χωρις να εχεις μπει βαρδια; Δηλαδη... πως θα βγαλεις λεφτα , ετσι; Συγκετρωνσου φιλε..",
-            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-        )
-    buttons = [InlineKeyboardButton(f"{m}ʼ", callback_data=f"break_{m}") for m in [15,20,25,30,35,45]]
-    buttons += [
-        InlineKeyboardButton("Custom", callback_data="break_custom"),
-        InlineKeyboardButton("Cancel", callback_data="break_cancel"),
-    ]
-    try:
-        await update.message.delete()
-    except:
-        pass
-    msg = await context.bot.send_message(
-        chat_id=TARGET_CHAT_ID,
-        text="☕ Επιλέξτε διάλειμμα:",
-        reply_markup=InlineKeyboardMarkup([buttons[:4], buttons[4:]]),
-        reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-    )
-    message_owner[(msg.chat.id, msg.message_id)] = uid
-
-# --- /back handler ---
-async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    end = break_timers.get(uid)
-    if not end:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text="❌ Δεν ήσουν σε διάλειμμα.",
-            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-        )
-    now = datetime.now(TZ)
-    start_time = context.user_data.get('break_start_time')
-    if not start_time:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text="❌ Δεν έχει αποθηκευτεί η ώρα έναρξης διαλείμματος.",
-            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-        )
-    duration_delta = now - start_time
-    actual_duration = max(1, round(duration_delta.total_seconds() / 60))
-    used = USER_BREAK_USED.get(uid, 0)
-    USER_BREAK_USED[uid] = used + actual_duration
-    remaining_quota = max(0, MAX_BREAK_MINUTES - USER_BREAK_USED[uid])
-    context.user_data.pop('break_duration', None)
-    break_timers.pop(uid, None)
-    break_active.discard(uid)
-    break_notified.discard(uid)
-    if USER_BREAK_USED[uid] > MAX_BREAK_MINUTES:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text="🚫 Πας να παρεις διαλλειμα ε; 45 λεπτα δεν εφταναν; Ενημρωνω .. τωρα θα δεις ",
-            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-        )
-    else:
-        return await context.bot.send_message(
-            chat_id=TARGET_CHAT_ID,
-            text=f"👋 Επέστρεψες και χρησιμοποίησες {actual_duration} λεπτά.\n🕒 Απομένουν {remaining_quota}ʼ. Μπες να βγαλεις λεφτα γρηγορα",
-            reply_to_message_id=BREAK_REPLY_TO_MESSAGE_ID
-        )
-
-# --- Break end notification job ---
-async def end_break(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Καλείται όταν λήγει το διάλειμμα του χρήστη.
-    Στέλνει προσωπικό μήνυμα στον χρήστη.
-    """
-    uid = context.job.data["uid"]
-    try:
-        await context.bot.send_message(
-            chat_id=uid,
-            text="⏱️ Το διάλειμμά σου ολοκληρώθηκε. /back"
-        )
-    except Exception as e:
-        logger.error(f"Failed to send break end notification to {uid}: {e}")
-
-async def break_checker():
-    app = Application.builder().token(TOKEN).build()
-    while True:
-        now = datetime.now(TZ)
-        for uid, end in list(break_timers.items()):
-            # Only send notification once, but do not remove from break_active or break_timers until /back
-            if uid in break_active and now >= end and uid not in break_notified:
-                break_notified.add(uid)
-                used = USER_BREAK_USED.get(uid, 0)
-                rem = MAX_BREAK_MINUTES - used
-                try:
-                    await app.bot.send_message(chat_id=uid, text="🔔 Το διάλειμμά σου έληξε. /back")
-                except Exception as e:
-                    logger.error(f"Private break notify error for {uid}: {e}")
-                await app.bot.send_message(chat_id=uid, text=f"📏 Έχεις {rem} λεπτά διαλείμματος διαθέσιμα.")
-                group_chat_id = break_group_chat_ids.get(uid)
-                if group_chat_id:
-                    late_minutes = int((now - end).total_seconds()) // 60
-                    if late_minutes >= 2:
-                        try:
-                            await app.bot.send_message(
-                                chat_id=group_chat_id,
-                                text=f"🔔 Ο @{user_names.get(uid, 'user')} άργησε στο διάλειμμα κατά {late_minutes} λεπτά. Μην γίνεστε σαν αυτόν γιατί θα φάτε πρόστιμο."
-                            )
-                        except Exception as e:
-                            logger.error(f"Group break notify error for {uid}: {e}")
-        await asyncio.sleep(5)
-
-# Shift reminder subsystem
-sent_reminders = set()  # keep track of (date_str, model, chatter_name)
-sent_late_reminders = set()  # keep track of late alerts (date, model, chatter_name)
-
-async def shift_reminder_checker(app):
-    from datetime import datetime, timedelta, time
-    while True:
-        try:
-            rows = fetch_sheet_values()
-            if rows and len(rows) > 1:
-                days = rows[0][1:]
-                # determine today's column index
-                today_idx = datetime.now(TZ).weekday()
-                if 0 <= today_idx < len(days):
-                    # for each row (model schedule)
-                    for row in rows[1:]:
-                        model = row[0].strip()
-                        cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
-                        if not cell:
-                            continue
-                        # split lines for morning/afternoon
-                        lines = [p.strip() for p in cell.splitlines() if p.strip()]
-                        for entry in lines:
-                            # parse time and chatter
-                            parts = entry.split()
-                            time_range = parts[0]  # e.g. "12:00-20:00" or "12:00-20:00"
-                            # normalize with hyphen
-                            if '-' not in time_range and len(parts) >= 2 and ':' in parts[1]:
-                                time_range = time_range + '-' + parts[1]
-                                chatter_name = parts[2] if len(parts) > 2 else ""
-                            else:
-                                chatter_name = parts[-1]
-                            start_str = time_range.split('-')[0]
-                            start_dt = TZ.localize(datetime.combine(datetime.now(TZ).date(), datetime.strptime(start_str, "%H:%M").time()))
-                            remind_dt = start_dt - timedelta(minutes=30)
-                            now = datetime.now(TZ)
-                            # if it's time to send reminder (within the last minute) and not sent already
-                            key = (now.date().isoformat(), model, chatter_name)
-                            if remind_dt <= now < remind_dt + timedelta(minutes=1) and key not in sent_reminders:
-                                sent_reminders.add(key)
-                                # lookup handle
-                                handle = CHATTER_HANDLES.get(chatter_name, "")
-                                # send DM if chatter has a known Telegram ID
-                                if handle:
-                                    username = handle.lstrip("@").lower()
-                                    user_id = KNOWN_USERS.get(username)
-                                    if user_id:
-                                        try:
-                                            keyboard = InlineKeyboardMarkup([[
-                                                InlineKeyboardButton("👍 Το είδα", callback_data=f"ack_{model}_{now.date().isoformat()}")
-                                            ]])
-                                            msg = await app.bot.send_message(
-                                                chat_id=user_id,
-                                                text=f"⏰ Υπενθύμιση: Η βάρδιά σου στο μοντέλο <b>{model}</b> ξεκινά στις {start_str}.",
-                                                parse_mode="HTML",
-                                                reply_markup=keyboard
-                                            )
-                                            # Ensure group_chat_id is set from bot_data
-                                            group_chat_id = app.bot_data.get('notify_chat_id')
-                                            # store pending ack for later check
-                                            pending_acks[msg.message_id] = (user_id, group_chat_id, model, handle)
-                                            # schedule a late-check task
-                                            asyncio.create_task(check_ack(msg.chat_id, msg.message_id, model, handle))
-                                        except Exception:
-                                            pass
-
-                            # Late start alerts: 15 minutes past start if not started
-                            late_dt = start_dt + timedelta(minutes=15)
-                            late_key = (now.date().isoformat(), model, chatter_name)
-                            # Check if late, not already alerted, and user hasn't started (mode off)
-                            if now >= late_dt and late_key not in sent_late_reminders:
-                                sent_late_reminders.add(late_key)
-                                # Determine shift type
-                                shift_type = "πρωινή" if start_dt.time() < time(hour=18) else "απογευματινή"
-                                # Lookup Telegram handle
-                                handle = CHATTER_HANDLES.get(chatter_name, "")
-                                group_chat_id = app.bot_data.get('notify_chat_id')
-                                if group_chat_id and handle:
-                                    await app.bot.send_message(
-                                        chat_id=group_chat_id,
-                                        text=f"🔔 {handle} άργησε στην {shift_type} του βάρδια!"
-                                    )
-        except Exception as e:
-            logger.error(f"Error in shift_reminder_checker: {e}")
-        await asyncio.sleep(10)
-
-# Shift reminder acknowledgment check coroutine
-async def check_ack(app, chat_id, message_id, model, handle):
-    await asyncio.sleep(120)
-    if message_id in pending_acks:
-        group_chat_id = app.bot_data.get('notify_chat_id')
-        # notify the chatter directly
-        try:
-            await app.bot.send_message(
-                chat_id=chat_id,
-                text=f"🔔 Δεν πάτησες \"Το είδα\" για το μοντέλο {model}. Παρακαλώ απάντησε asap."
-            )
-        except Exception as e:
-            logger.error(f"Error notifying user late ack: {e}")
-
-        # notify each admin
-        for admin in ALLOWED_APPROVERS:
-            admin_id = KNOWN_USERS.get(admin)
-            if admin_id:
-                try:
-                    await app.bot.send_message(
-                        chat_id=admin_id,
-                        text=f"⚠️ O {handle} δεν πάτησε \"Το είδα\" για το μοντέλο {model} μέσα στα 2ʼ."
-                    )
-                except Exception as e:
-                    logger.error(f"Error notifying admin {admin} on late ack: {e}")
-
-
-# === Scheduled weekly report job ===
-async def send_weekly_report_job(context: ContextTypes.DEFAULT_TYPE):
-    from datetime import datetime, timedelta
-    admin_chat_id = context.application.bot_data.get('notify_chat_id')
-    if not admin_chat_id:
-        return
-    now = datetime.now(TZ)
-    week_ago = now - timedelta(days=7)
-    c.execute(
-        "SELECT user_id, start_time FROM shifts WHERE start_time BETWEEN ? AND ?",
-        (week_ago.isoformat(), now.isoformat())
-    )
-    rows = c.fetchall()
-    report = "📊 Εβδομαδιαία αναφορά βαρδιών:\n"
-    durations = {}
-    for user_id, start_iso in rows:
-        try:
-            start = datetime.fromisoformat(start_iso)
-        except:
-            continue
-        delta = now - start
-        durations.setdefault(user_id, timedelta()).__iadd__(delta)
-    for uid, total in durations.items():
-        h = total.seconds // 3600
-        m = (total.seconds % 3600) // 60
-        username = user_names.get(int(uid), f"id_{uid}")
-        report += f"- @{username}: {h}h {m}m\n"
-    await context.bot.send_message(admin_chat_id, report)
-
-
-# === Weekly report subsystem ===
-async def weekly_report_checker(app):
-    from datetime import datetime, timedelta
-    admin_chat_id = app.bot_data.get('notify_chat_id')
-    if not admin_chat_id:
-        return
-    while True:
-        now = datetime.now(TZ)
-        # run every Monday at 09:00
-        if now.weekday() == 0 and now.hour == 9 and now.minute == 0:
-            # calculate one week ago
-            week_ago = now - timedelta(days=7)
-            c.execute("""
-                SELECT user_id, mode, start_time
-                FROM shifts
-                WHERE start_time BETWEEN ? AND ?
-            """, (week_ago.isoformat(), now.isoformat()))
-            rows = c.fetchall()
-            report = "📊 Εβδομαδιαία αναφορά βαρδιών:\n"
-            # aggregate durations per user
-            durations = {}
-            for user_id, mode, start_iso in rows:
-                # parse start_time
-                start = datetime.fromisoformat(start_iso)
-                end = now  # for simplicity, approximate
-                delta = now - start
-                durations.setdefault(user_id, timedelta()).__iadd__(delta)
-            for uid, total in durations.items():
-                h = total.seconds // 3600
-                m = (total.seconds % 3600) // 60
-                username = user_names.get(int(uid), f"id_{uid}")
-                report += f"- @{username}: {h}h {m}m\n"
-            await app.bot.send_message(admin_chat_id, report)
-        await asyncio.sleep(60)
-
-
-
-
-# === MAIN ===
-
-async def populate_user_list(application):
-    updates = await application.bot.get_updates()
-    users = {u.message.from_user.id: u.message.from_user for u in updates if u.message}
-    application.bot_data["user_list"] = list(users.values())
-
-async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    # only allow admins to restart
-    if user.username not in ALLOWED_APPROVERS:
-        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα να κάνετε επανεκκίνηση.")
-    await update.message.reply_text("♻️ Επανεκκίνηση bot...")
-    # re-exec the current python process
-    os.execv(sys.executable, [sys.executable] + sys.argv)
-
-
-async def handle_chatters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        rows = fetch_sheet_values()
-    except Exception as e:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Σφάλμα κατά την ανάκτηση του sheet.")
-    if not rows or len(rows) < 2:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Δεν βρέθηκαν δεδομένα στο sheet.")
-    # Collect unique chatter names from all shift cells
-    names = set()
-    # Skip header row
-    for row in rows[1:]:
-        for cell in row[1:]:
+        for idx, cell in enumerate(row[1:]):
             cell_text = cell.strip()
             if not cell_text:
                 continue
-            # Split into lines for morning/afternoon
             parts = [p.strip() for p in cell_text.splitlines() if p.strip()]
-            for part in parts:
-                # Extract name after the time range
-                m = re.match(r'.*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*(.+)$', part)
-                if m:
-                    names.add(m.group(1))
-                else:
-                    names.add(part)
-    # Canonicalize names after collecting
-    canonical_map = {
-        "Karapantsos": "Καραπάντσος",
-        "Καραπάντσος": "Καραπάντσος",
-        "Macro": "Μακρο",
-        "Μακρο": "Μακρο",
-        "Nίκος": "Νίκος",
-        "Νίκος": "Νίκος",
-        "Βασίλης": "Βασιλης",
-        "Βασιλης": "Βασιλης"
-    }
-    names = {canonical_map.get(name, name) for name in names}
-    # Manually include Βασίλης if mentioned
-    names.add("Βασιλης")
-    if not names:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Δεν βρέθηκαν chatters.")
-    sorted_names = sorted(names)
-    lines = []
-    for idx, name in enumerate(sorted_names, start=1):
-        handle = CHATTER_HANDLES.get(name, "")
-        if handle:
-            lines.append(f"{idx}. {name} - {handle}")
+            if not parts:
+                continue
+            if model not in schedule[days[idx]]:
+                schedule[days[idx]][model] = []
+            schedule[days[idx]][model].extend(parts)
+    # Emoji per day
+    day_emojis = ["🌞"]*5 + ["🎉", "🎉"]
+    MAX_MSG_LEN = 4000
+    for i, day in enumerate(days):
+        day_entries = schedule.get(day, {})
+        msg = f"<b>{day_emojis[i]} {day}</b>\n"
+        if not day_entries:
+            msg += "• –"
         else:
-            lines.append(f"{idx}. {name}")
-    message = f"📋 Συνολικά chatters: {len(sorted_names)}\n\t" + "\n\t".join(lines)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+            for model, shifts in day_entries.items():
+                msg += f"\n<b>• {model}</b>\n"
+                for shift in shifts:
+                    import re
+                    m = re.search(r"(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})", shift)
+                    if m:
+                        time_str = m.group(1)
+                        rest = shift.replace(time_str, "").strip(" -:")
+                        msg += f"⏰ <b>{time_str}</b> | {rest}\n"
+                    else:
+                        msg += f"{shift}\n"
+        # Split if too long
+        for chunk in [msg[j:j+MAX_MSG_LEN] for j in range(0, len(msg), MAX_MSG_LEN)]:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=chunk.strip(),
+                parse_mode="HTML",
+                reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+            )
+            await asyncio.sleep(0.5)
 
-
-async def handle_weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔄 Η εβδομαδιαία αναφορά θα σταλεί στο admin την επόμενη Δευτέρα στις 09:00.")
-
-
-# --- /admin_schedule handler ---
-async def handle_admin_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # only allow admins
-    if update.effective_user.username not in ALLOWED_APPROVERS:
-        return await update.message.reply_text("❌ Δεν έχετε δικαίωμα σε αυτή την εντολή.")
+# --- /durations_today handler ---
+async def handle_durations_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import pytz
+    from datetime import datetime, timezone, timedelta
+    tz = pytz.timezone("Europe/Athens")
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+    # Πάρε όλα τα shifts
     try:
-        rows = fetch_sheet_values()
-    except Exception:
-        return await update.message.reply_text("❌ Σφάλμα κατά την ανάκτηση του προγράμματος.")
-    if not rows or len(rows) < 2:
-        return await update.message.reply_text("❌ Δεν βρέθηκαν δεδομένα.")
-    # Build today's schedule
-    days = rows[0][1:]
-    today_idx = datetime.now(TZ).weekday()
-    if today_idx < 0 or today_idx >= len(days):
-        return await update.message.reply_text("❌ Σφάλμα ημέρας.")
-    day_name = days[today_idx]
-    lines = [f"📋 Πρόγραμμα για σήμερα ({day_name}):"]
-    for row in rows[1:]:
-        model = row[0].strip()
-        cell = row[1 + today_idx].strip() if len(row) > 1 + today_idx else ""
-        if cell:
-            lines.append(f"- {model}: {cell.replace(chr(10), ' | ')}")
-    message = "\n".join(lines)
-    # Send to each admin
-    for admin in ("mikekrp", "tsaqiris"):
-        admin_id = KNOWN_USERS.get(admin)
-        if admin_id:
-            await context.bot.send_message(chat_id=admin_id, text=message)
-    await update.message.reply_text("✅ Το πρόγραμμα στάλθηκε στους admins.")
-
-# === --- ===  FLOW  /makeprogram  === --- ===
-# Απαιτεί τα helper: safe_send, safe_delete  +  consts: DAYS, ALLOWED_APPROVERS, KNOWN_USERS, TZ
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from datetime import datetime
-import re
-
-# ── /makeprogram ───────────────────────────────────────────
-async def mp_start(update: Update, context):
-    """/makeprogram – ξεκινά ο χρήστης το πλάνο 7 ημερών."""
-    uid = update.effective_user.id
-    context.user_data.clear()
-    context.user_data.update({
-        "step": 0,              # 0: pick day, 1: pick type, 2: pick start, 3: pick end, 99: preview
-        "program": {},          # day → {shift_type, hours}
-    })
-    await safe_send(context.bot, uid, "📅 Ξεκίνα επιλέγοντας ημέρα:", reply_markup=_mp_days_kb(context))
-
-# ── callback handler ──────────────────────────────────────
-async def mp_cb(update: Update, context):
-    q, uid = update.callback_query, update.effective_user.id
-    await q.answer()
-    data = q.data
-    step = context.user_data.get("step", 0)
-
-    # -------- ΠΙΣΩ από Preview ----------
-    if data == "mp_back" and step == 99:
-        context.user_data["step"] = 0
-        await safe_send(context.bot, uid, "📅 Συνέχισε επεξεργασία:", reply_markup=_mp_days_kb(context))
-        return
-
-    # -------- Επιλογή ημέρας ------------
-    if data.startswith("mp_day_") and step == 0:
-        idx = int(data.split("_")[2]); day = DAYS[idx]
-        if context.user_data["program"].get(day, {}).get("confirmed"):
-            return await q.answer("Η μέρα έχει κλειδώσει.")
-        context.user_data.update(step=1, current_day=day)
-        # build type keyboard
-        dayoff_cnt = sum(1 for e in context.user_data["program"].values() if e["shift_type"]=="dayoff")
-        kb = [
-            [InlineKeyboardButton("Πρωινή",      callback_data="mp_type_morning")],
-            [InlineKeyboardButton("Απογευματινή", callback_data="mp_type_afternoon")]
-        ]
-        if dayoff_cnt < 2:
-            kb.append([InlineKeyboardButton("Ρεπό", callback_data="mp_type_dayoff")])
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, f"🗓 {day} – διάλεξε βάρδια:", reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    # -------- Ρεπό -----------------------
-    if data == "mp_type_dayoff" and step == 1:
-        day = context.user_data["current_day"]
-        context.user_data["program"][day] = {"shift_type":"dayoff","hours":"—","confirmed":True}
-        context.user_data["step"] = 0
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, f"✅ {day} — Ρεπό καταχωρήθηκε.")
-        await safe_send(context.bot, uid, "📅 Συνέχισε:", reply_markup=_mp_days_kb(context))
-        return
-
-    # -------- Πρωινή / Απογ. βάρδια ------
-    if data.startswith("mp_type_") and step == 1:
-        stype = data.split("_")[2]          # morning / afternoon
-        day   = context.user_data["current_day"]
-        context.user_data["program"][day] = {"shift_type": stype}
-        context.user_data["step"] = 2
-        starts = range(11,15) if stype=="morning" else range(19,24)
-        kb = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"mp_start_{h}")] for h in starts]
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, f"🕑 {day} – ώρα ΕΝΑΡΞΗΣ:",
-                        reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    # -------- Επιλογή ώρας έναρξης -------
-    if data.startswith("mp_start_") and step == 2:
-        sh   = int(data.split("_")[2])
-        day  = context.user_data["current_day"]
-        stype= context.user_data["program"][day]["shift_type"]
-        context.user_data["program"][day]["start"] = sh
-        context.user_data["step"] = 3
-        ends = (range(sh+1,16) if stype=="morning" else range(sh+1,24)) or [sh+1]
-        kb = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"mp_end_{h}")] for h in ends]
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, f"🕛 {day} – ώρα ΛΗΞΗΣ:",
-                        reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    # -------- Επιλογή ώρας λήξης ---------
-    if data.startswith("mp_end_") and step == 3:
-        eh  = int(data.split("_")[2])
-        day = context.user_data["current_day"]
-        sh  = context.user_data["program"][day]["start"]
-        context.user_data["program"][day].update(hours=f"{sh:02d}:00-{eh:02d}:00", confirmed=True)
-        context.user_data["step"] = 0
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, f"✅ {day} — {context.user_data['program'][day]['hours']}")
-        await safe_send(context.bot, uid, "📅 Συνέχισε:",
-                        reply_markup=_mp_days_kb(context))
-        return
-
-    # -------- Προεπισκόπηση --------------
-    if data == "mp_preview":
-        context.user_data["step"] = 99
-        summary = "\n".join(
-            f"{d}: {e['shift_type']} {e['hours']}" if (e:=context.user_data['program'].get(d)) else f"{d}: –"
-            for d in DAYS
-        )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Πίσω", callback_data="mp_back")]])
-        await safe_send(context.bot, uid, f"📋 Προεπισκόπηση:\n\n{summary}", reply_markup=kb)
-        return
-
-    # -------- Τέλος -> αποστολή ----------
-    if data == "mp_send":
-        prog = context.user_data["program"]
-        if len([d for d in prog if prog[d].get("confirmed")]) < 7:
-            return await q.answer("Συμπλήρωσε και τις 7 ημέρες!", show_alert=True)
-
-        lines = [f"<b>{d}</b>: {e['shift_type']} {e['hours']}" for d,e in prog.items()]
-        username = update.effective_user.username or "user"
-        today = datetime.now(TZ).strftime("%d/%m/%Y")
-        report = f"📨 Πρόγραμμα @{username} ({today})\n\n" + "\n".join(lines)
-        for adm in ALLOWED_APPROVERS:
-            aid = KNOWN_USERS.get(adm)
-            if aid:
-                await safe_send(context.bot, aid, report, parse_mode="HTML")
-        context.user_data.clear()
-        await safe_delete(q.message)
-        await safe_send(context.bot, uid, "✅ Το πρόγραμμα στάλθηκε στους admins.")
-        return
-
-# ── helper: inline keyboard με τις 7 ημέρες + action buttons ──
-def _mp_days_kb(ctx):
-    prog = ctx.user_data.get("program", {})
-    kb = [
-        [InlineKeyboardButton("🆗 Τέλος, στείλτο", callback_data="mp_send")],
-        [InlineKeyboardButton("🔍 Προεπισκόπηση", callback_data="mp_preview")]
-    ]
-    for i,d in enumerate(DAYS):
-        lbl = f"🟢 {d}" if d in prog and prog[d].get("confirmed") else d
-        kb.append([InlineKeyboardButton(lbl, callback_data=f"mp_day_{i}")])
-    return InlineKeyboardMarkup(kb)
-
-# ── text handler (αν θες manual ώρες)  -----------------------
-async def mp_text(update: Update, context):
-    if context.user_data.get("step") != "free":
-        return
-    day = context.user_data["current_day"]
-    context.user_data["program"][day].update(hours=update.message.text.strip(), confirmed=True)
-    context.user_data["step"] = 0
-    await safe_send(context.bot, update.effective_chat.id, f"✅ {day} – καταχωρήθηκε.")
-    await safe_send(context.bot, update.effective_chat.id, "📅 Συνέχισε:", reply_markup=_mp_days_kb(context))
-
-# ── add handlers στην εφαρμογή σου ───────────────────────────
-# application.add_handler(CommandHandler("makeprogram", mp_start))
-# application.add_handler(CallbackQueryHandler(mp_cb, pattern="^mp_"))
-# application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mp_text))
-
-from telegram import Update
-from telegram.ext import ContextTypes
-
-# --- /start handler ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Καλωσήρθες στο infloww bot!")
-
-async def main():
-    print("Ξεκίνησε η main() ✅")
-
-    # 1. Δημιουργία εφαρμογής ΠΡΙΝ από οτιδήποτε άλλο
-    application = Application.builder().token(TOKEN).build()
-
-    # 2. Background tasks
-    asyncio.create_task(shift_reminder_checker(application))
-
-    # 3. Προσθήκη όλων των handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("on", handle_on))
-    application.add_handler(CommandHandler("off", handle_off))
-    application.add_handler(CommandHandler("onprogram", handle_onprogram))
-    application.add_handler(CommandHandler("makeprogram", handle_makeprogram))
-    application.add_handler(CommandHandler("liveon", handle_liveon))
-    application.add_handler(CommandHandler("liveoff", handle_liveoff))
-    application.add_handler(CommandHandler("status", handle_status))
-    application.add_handler(CommandHandler("whoison", handle_whoison))
-    application.add_handler(CommandHandler("sendreport", handle_sendreport))
-    application.add_handler(CommandHandler("cancel", handle_cancel))
-    application.add_handler(CommandHandler("update", handle_update_data))
-    application.add_handler(CallbackQueryHandler(live_callback, pattern="^live"))
-    application.add_handler(CallbackQueryHandler(onprogram_callback, pattern="^onp_"))
-    application.add_handler(CallbackQueryHandler(confirmation_callback, pattern="^confirm_"))
-
-    # 4. Προγραμματισμένες εργασίες
-    application.job_queue.run_daily(send_weekly_report_job, time=time(hour=22, minute=0), days=[6])
-
-    # 5. Εκκίνηση bot
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    await application.updater.idle()
-
-if __name__ == "__main__":
-    from telegram.ext import Application
-
-    # 1) Φτιάχνουμε το app με το token
-    application = Application.builder().token(TOKEN).build()
-
-    # 2) Καταχωρούμε όλους τους handlers
-    application.add_handler(CommandHandler("getid", get_id))
-    application.add_handler(CommandHandler("register", handle_register))
-    application.add_handler(CommandHandler("start", handle_start))
-    application.add_handler(CommandHandler("on", handle_on))
-    application.add_handler(CommandHandler("off", handle_off))
-    application.add_handler(CommandHandler("onall", handle_onall))
-    application.add_handler(CommandHandler("offall", handle_offall))
-    application.add_handler(CommandHandler("status", handle_status))
-    application.add_handler(CommandHandler("give", handle_give))
-    application.add_handler(CommandHandler("mistake_on", handle_mistake_on))
-    application.add_handler(CommandHandler("mistake_off", handle_mistake_off))
-    application.add_handler(CommandHandler("mistake_status", handle_mistake_status))
-    application.add_handler(CommandHandler("live", handle_live))
-    application.add_handler(CommandHandler("liveoff", handle_liveoff))
-    application.add_handler(CommandHandler("active", handle_active))
-    application.add_handler(CommandHandler("remaining", handle_remaining))
-    application.add_handler(CommandHandler("break", handle_break))
-    application.add_handler(CommandHandler("back", handle_back))
-    application.add_handler(CommandHandler("break_balance", handle_break_balance))
-    application.add_handler(CommandHandler("show_program", handle_show_program))
-    application.add_handler(CommandHandler("weekly_program", handle_weekly_program))
-    application.add_handler(CommandHandler("myprogram", handle_myprogram))
-    application.add_handler(CommandHandler("onprogram", handle_onprogram))
-    application.add_handler(CommandHandler("help", handle_help))
-    application.add_handler(CommandHandler("chatters", handle_chatters))
-    application.add_handler(CommandHandler("admin_schedule", handle_admin_schedule))
-    application.add_handler(CommandHandler("weekly_report", handle_weekly_report)) 
-    application.add_handler(CommandHandler("makeprogram", handle_makeprogram_start))
-    application.add_handler(CallbackQueryHandler(handle_makeprogram_day, pattern="^mp_"))
-    application.add_handler(CallbackQueryHandler(common_button_handler))
-    application.add_handler(CommandHandler("notify", handle_notify))
-    # Για το custom-break input
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_break_choice))
-
-    # 3) Τέλος, “τρέχουμε” το bot
-    application.run_polling()
-# --- ENTRY POINT ---
-if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.run(main())  
-
-    
-async def notify_break_end(context: ContextTypes.DEFAULT_TYPE):
-    uid = context.job.data["uid"]
-    await context.bot.send_message(chat_id=uid, text="🔔 Το διάλειμμά σου έληξε. Μπορείς να επιστρέψεις!")
-# === Break End Notification ===
-from telegram.ext import CallbackContext
-
-async def schedule_break_end_notification(context: CallbackContext):
-    uid = context.job.data["uid"]
-    await context.bot.send_message(
-        chat_id=uid,
-        text="🔔 Το διάλειμμα σου τελείωσε. Επιστροφή!"
-    )
-# --- End of break notification ---
-async def end_break(context: ContextTypes.DEFAULT_TYPE):
-    uid = context.job.data["uid"]
-    try:
-        await context.bot.send_message(chat_id=uid, text="⏱️ Το διάλειμμά σου ολοκληρώθηκε.")
+        resp = supabase.table("shifts").select("user_id,username,models,start_time,on_time,active,mode").execute()
+        shifts = resp.data if resp and resp.data else []
     except Exception as e:
-        print(f"Failed to send break end message to {uid}: {e}")
+        return await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Σφάλμα Supabase: {e}",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    # Ομαδοποίησε τα shifts ανά χρήστη
+    user_shifts = defaultdict(list)
+    for s in shifts:
+        st = s.get("start_time")
+        if not st:
+            continue
+        try:
+            st_dt = datetime.fromisoformat(st).astimezone(tz)
+        except Exception:
+            continue
+        # Αγνόησε shifts που ξεκινούν στο μέλλον
+        if st_dt > now:
+            continue
+        if st_dt.strftime("%Y-%m-%d") != today_str:
+            continue
+        user_shifts[s.get("user_id")].append(s)
+    # --- Εμφάνιση όλων των chatters, ακόμα και χωρίς shift ---
+    all_usernames = set([s.get("username") or uid for uid, shifts in user_shifts.items() for s in shifts]) | set(CHATTER_HANDLES.keys())
+    username_to_result = {}
+    for user_id in user_shifts:
+        shifts = user_shifts[user_id]
+        username = shifts[0].get("username") if shifts else user_id
+        # Φιλτράρω μόνο τα σημερινά ON/OFF
+        filtered_shifts = [s for s in sorted(shifts, key=lambda x: x.get("start_time")) if s.get("mode") in ("on", "off")]
+        total_seconds = 0
+        on_time = None
+        for s in filtered_shifts:
+            mode = s.get("mode")
+            st = s.get("start_time")
+            try:
+                st_dt = datetime.fromisoformat(st).astimezone(tz)
+            except Exception:
+                continue
+            if st_dt > now:
+                continue
+            if mode == "on":
+                if on_time is None:
+                    on_time = st_dt
+            elif mode == "off":
+                if on_time is not None and st_dt > on_time:
+                    delta = (st_dt - on_time).total_seconds()
+                    if 0 < delta <= 16*3600:
+                        total_seconds += delta
+                    on_time = None
+                else:
+                    on_time = None
+        # Αν υπάρχει ανοιχτό ON μέχρι τώρα
+        if on_time is not None:
+            delta = (now - on_time).total_seconds()
+            if 0 < delta <= 16*3600:
+                total_seconds += delta
+        h = int(total_seconds // 3600)
+        m = int((total_seconds % 3600) // 60)
+        username_to_result[username] = (username, h, m, [])
+    # Εμφάνιση όλων των chatters (και όσων δεν έχουν shift)
+    for chatter in sorted(all_usernames):
+        if chatter in username_to_result:
+            username, h, m, debug_pairings = username_to_result[chatter]
+            if h == 0 and m == 0:
+                continue  # Εμφάνισε μόνο όσους έχουν duration > 0
+        else:
+            continue  # Αγνόησε όσους δεν έχουν shift
+        msg = f"<b>{username}</b>: {h}:{m:02d} ώρες\n"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=msg.strip(),
+            parse_mode="HTML",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    return
+
+# --- /durations <YYYY-MM> handler ---
+async def handle_durations_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import pytz
+    from datetime import datetime, timezone, timedelta
+    from calendar import monthrange
+    tz = pytz.timezone("Europe/Athens")
+    now = datetime.now(tz)
+    # Parse argument
+    month_arg = None
+    if context.args and len(context.args) > 0:
+        month_arg = context.args[0]
+    elif update.message and update.message.text:
+        # For shortcut commands
+        if update.message.text.lower().startswith("/durations_june"):
+            month_arg = f"{now.year}-06"
+        elif update.message.text.lower().startswith("/durations_may"):
+            month_arg = f"{now.year}-05"
+        elif update.message.text.lower().startswith("/durations_july"):
+            month_arg = f"{now.year}-07"
+    if not month_arg:
+        month_arg = now.strftime("%Y-%m")
+    try:
+        year, month = map(int, month_arg.split("-"))
+    except Exception:
+        return await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Δώσε μήνα σε μορφή YYYY-MM, π.χ. /durations 2024-06",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    # Υπολόγισε αρχή και τέλος μήνα
+    first_day = datetime(year, month, 1, tzinfo=tz)
+    last_day = datetime(year, month, monthrange(year, month)[1], 23, 59, 59, tzinfo=tz)
+    num_days = monthrange(year, month)[1]
+    # Πάρε όλα τα shifts του μήνα
+    try:
+        resp = supabase.table("shifts").select("user_id,username,models,start_time,on_time,active,mode").execute()
+        shifts = resp.data if resp and resp.data else []
+    except Exception as e:
+        return await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Σφάλμα Supabase: {e}",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    # Ομαδοποίησε τα shifts ανά χρήστη
+    user_shifts = defaultdict(list)
+    for s in shifts:
+        st = s.get("start_time")
+        if not st:
+            continue
+        try:
+            st_dt = datetime.fromisoformat(st)
+            st_dt = st_dt.astimezone(tz)
+        except Exception:
+            continue
+        # Αγνόησε shifts που ξεκινούν στο μέλλον
+        if st_dt > now:
+            continue
+        if not (first_day <= st_dt <= last_day):
+            continue
+        user_shifts[s.get("user_id")].append(s)
+    # === DEBUG PRINT: δείξε τα shifts που βρέθηκαν ===
+    debug_lines = []
+    for user_id, shifts in user_shifts.items():
+        username = shifts[0].get("username") if shifts else user_id
+        debug_lines.append(f"<b>{username}</b>:")
+        for s in sorted(shifts, key=lambda x: x.get("start_time")):
+            debug_lines.append(f"  {s.get('mode','?')} | {s.get('start_time','?')}")
+    if debug_lines:
+        debug_msg = "<b>DEBUG: Shifts found for this month:</b>\n" + "\n".join(debug_lines)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=debug_msg,
+            parse_mode="HTML",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+    # Υπολόγισε συνολικό duration και ανά μέρα ανά χρήστη
+    results = []
+    for user_id, shifts in user_shifts.items():
+        username = None
+        total_seconds = 0
+        # Φιλτράρω μόνο ON/OFF (αγνοώ break)
+        filtered_shifts = [s for s in sorted(shifts, key=lambda x: x.get("start_time")) if s.get("mode") in ("on", "off")]
+        on_time = None
+        # dict: date_str -> seconds
+        day_durations = { (first_day + timedelta(days=i)).strftime("%Y-%m-%d"): 0 for i in range(num_days) }
+        for s in filtered_shifts:
+            mode = s.get("mode")
+            st = s.get("start_time")
+            username = s.get("username") or user_id
+            try:
+                st_dt = datetime.fromisoformat(st).astimezone(tz)
+            except Exception:
+                continue
+            # Αγνόησε shifts που ξεκινούν στο μέλλον
+            if st_dt > now:
+                continue
+            if mode == "on":
+                # Αν υπάρχει ήδη ανοιχτό ON, κρατάμε μόνο το τελευταίο
+                on_time = st_dt
+            elif mode == "off":
+                if on_time is None:
+                    continue  # Αγνόησε OFF χωρίς προηγούμενο ON
+                off_time = st_dt
+                # Αν το OFF είναι πριν ή ίσο με το ON, αγνόησέ το
+                if off_time <= on_time:
+                    on_time = None
+                    continue
+                # Αν το shift ξεκινάει και τελειώνει ίδια μέρα, απλό
+                if on_time.date() == off_time.date():
+                    day_str = on_time.strftime("%Y-%m-%d")
+                    delta = (off_time - on_time).total_seconds()
+                    # Αγνόησε duration > 16 ώρες ή αρνητικά ή μηδενικά
+                    if 0 < delta <= 16*3600:
+                        day_durations[day_str] += delta
+                        total_seconds += delta
+                else:
+                    # Αν το shift περνάει μέρες, μοίρασέ το σωστά
+                    cur = on_time
+                    while cur.date() < off_time.date():
+                        day_end = datetime(cur.year, cur.month, cur.day, 23, 59, 59, tzinfo=tz)
+                        delta = (day_end - cur).total_seconds()
+                        day_str = cur.strftime("%Y-%m-%d")
+                        if 0 < delta <= 16*3600:
+                            day_durations[day_str] += delta
+                            total_seconds += delta
+                        cur = day_end + timedelta(seconds=1)
+                    # Τελευταία μέρα
+                    day_str = off_time.strftime("%Y-%m-%d")
+                    delta = (off_time - datetime(off_time.year, off_time.month, off_time.day, 0, 0, 0, tzinfo=tz)).total_seconds()
+                    if 0 < delta <= 16*3600:
+                        day_durations[day_str] += delta
+                        total_seconds += delta
+                on_time = None
+        if on_time:
+            # Αν υπάρχει ανοιχτό shift, μετράμε μέχρι τέλος μήνα ή τώρα (ό,τι είναι μικρότερο)
+            end_time = min(last_day, now)
+            if end_time <= on_time:
+                continue
+            cur = on_time
+            while cur.date() < end_time.date():
+                day_end = datetime(cur.year, cur.month, cur.day, 23, 59, 59, tzinfo=tz)
+                delta = (day_end - cur).total_seconds()
+                day_str = cur.strftime("%Y-%m-%d")
+                if 0 < delta <= 16*3600:
+                    day_durations[day_str] += delta
+                    total_seconds += delta
+                cur = day_end + timedelta(seconds=1)
+            # Τελευταία μέρα
+            day_str = end_time.strftime("%Y-%m-%d")
+            delta = (end_time - datetime(end_time.year, end_time.month, end_time.day, 0, 0, 0, tzinfo=tz)).total_seconds()
+            if 0 < delta <= 16*3600:
+                day_durations[day_str] += delta
+                total_seconds += delta
+        # ΠΡΟΣΘΕΤΩ: Εμφανίζω όλους τους χρήστες, ακόμα κι αν total_seconds == 0
+        h = int(total_seconds // 3600)
+        m = int((total_seconds % 3600) // 60)
+        results.append((username, h, m, day_durations))
+    results.sort(key=lambda x: (-x[1], -x[2], x[0]))
+    # Format message
+    month_label = f"{year}-{month:02d}"
+    if not results:
+        msg = f"Δεν υπάρχουν βάρδιες για τον μήνα {month_label}."
+    else:
+        msg = f"<b>📊 Συνολικές ώρες για {month_label}:</b>\n"
+        for username, h, m, day_durations in results:
+            msg += f"<b>{username}</b>: {h}:{m:02d} ώρες\n"
+            for day in sorted(day_durations.keys()):
+                sec = day_durations[day]
+                if sec > 0:
+                    dh = int(sec // 3600)
+                    dm = int((sec % 3600) // 60)
+                    msg += f"  {day}: {dh}:{dm:02d} ώρες\n"
+                else:
+                    msg += f"  {day}: –\n"
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=msg.strip(),
+        parse_mode="HTML",
+        reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+    )
+    # --- Εμφάνιση όλων των chatters, ακόμα και χωρίς shift ---
+    all_usernames = set([x[0] for x in results]) | set(CHATTER_HANDLES.keys())
+    username_to_result = {x[0]: x for x in results}
+    for chatter in sorted(all_usernames):
+        if chatter in username_to_result:
+            username, h, m, day_durations = username_to_result[chatter]
+        else:
+            username = chatter
+            h, m = 0, 0
+            # Δημιουργώ κενό dict για όλες τις μέρες
+            day_durations = { (first_day + timedelta(days=i)).strftime("%Y-%m-%d"): 0 for i in range(num_days) }
+        msg = f"<b>{username}</b>: {h}:{m:02d} ώρες\n"
+        for day in sorted(day_durations.keys()):
+            sec = day_durations[day]
+            if sec > 0:
+                dh = int(sec // 3600)
+                dm = int((sec % 3600) // 60)
+                msg += f"  {day}: {dh}:{dm:02d} ώρες\n"
+            else:
+                msg += f"  {day}: –\n"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=msg.strip(),
+            parse_mode="HTML",
+            reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+        )
+        # --- DEBUG: pairing info ---
+        if chatter in username_to_result:
+            _, _, _, day_durations = username_to_result[chatter]
+            debug_lines = []
+            for day in sorted(day_durations.keys()):
+                sec = day_durations[day]
+                debug_lines.append(f"{day}: {sec//3600}:{int((sec%3600)//60):02d} ώρες" if sec > 0 else f"{day}: –")
+            debug_msg = f"<b>DEBUG: {username} pairings</b>\n" + "\n".join(debug_lines)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=debug_msg,
+                parse_mode="HTML",
+                reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID)
+            )
+    return
+
+# --- /mistakeon Command ---
+async def mistakeon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    
+    # Βρες τα ήδη ενεργά models του χρήστη
+    active_models = []
+    start_time = None
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if resp.data and len(resp.data) > 0:
+            active = resp.data[0].get("active")
+            if active:
+                active_models = resp.data[0].get("models") or []
+                if isinstance(active_models, str):
+                    try:
+                        import json
+                        active_models = json.loads(active_models)
+                    except Exception:
+                        active_models = []
+                start_time = resp.data[0].get("start_time")
+    except Exception:
+        pass
+    
+    # Βρες τα μοντέλα που είναι ήδη ενεργά από άλλους χρήστες
+    unavailable_models = set()
+    try:
+        resp = supabase.table("users").select("models").eq("active", True).execute()
+        for user_data in resp.data:
+            models = user_data.get("models") or []
+            if isinstance(models, str):
+                try:
+                    import json
+                    models = json.loads(models)
+                except Exception:
+                    models = []
+            unavailable_models.update(models)
+    except Exception:
+        pass
+    
+    # Φιλτράρω μόνο τα mistake models που είναι διαθέσιμα
+    available_mistake_models = [m for m in MISTAKE_MODELS if m not in unavailable_models]
+    
+    if not available_mistake_models:
+        await update.message.reply_text("Δεν υπάρχουν διαθέσιμα mistake models αυτή τη στιγμή.", reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID))
+        return
+    
+    selected_models = set()
+    sent = await update.message.reply_text(
+        "Επίλεξε mistake models για να κάνεις on:",
+        reply_markup=build_mistakeon_keyboard(selected_models, unavailable_models)
+    )
+    
+    if context.chat_data is not None and 'mistakeon_sessions' not in context.chat_data:
+        context.chat_data['mistakeon_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['mistakeon_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'selected_models': selected_models,
+            'unavailable_models': unavailable_models
+        }
+
+def build_mistakeon_keyboard(selected, unavailable):
+    keyboard = []
+    row = []
+    for i, model in enumerate(MISTAKE_MODELS, 1):
+        if model in unavailable:
+            row.append(dbg_btn(f"🔒 {model}", "ignore"))
+        else:
+            checked = "🟢 " if model in selected else ""
+            row.append(dbg_btn(f"{checked}{model}", f"mistakeon_{model}"))
+        if i % 4 == 0 or i == len(MISTAKE_MODELS):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "mistakeon_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def mistakeon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    print(f"DEBUG: mistakeon_callback called with data={query.data if query and query.data else 'None'}")
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    
+    session = context.chat_data.get('mistakeon_sessions', {}).get(msg.message_id) if context.chat_data and context.chat_data.get('mistakeon_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    
+    initiator_id = session['initiator']
+    selected = session['selected_models']
+    unavailable = session['unavailable_models']
+    
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    
+    data = query.data
+    if data == "ignore":
+        await query.answer("Το μοντέλο αυτή τη στιγμή είναι ήδη on", show_alert=True)
+        return
+    
+    elif data == "mistakeon_ok":
+        print(f"DEBUG: OK button pressed! selected={list(selected)}")
+        if not selected:
+            await query.answer("Επίλεξε τουλάχιστον ένα μοντέλο!", show_alert=True)
+            return
+        
+        # Ανάκτηση προηγούμενων models και start_time
+        old_models = []
+        old_start_time = None
+        had_no_models = False
+        try:
+            resp = supabase.table("users").select("models,start_time").eq("user_id", user_id).execute()
+            if resp.data and len(resp.data) > 0:
+                old_models = resp.data[0].get("models") or []
+                if isinstance(old_models, str):
+                    try:
+                        import json
+                        old_models = json.loads(old_models)
+                    except Exception:
+                        old_models = []
+                if not old_models:
+                    had_no_models = True
+                if old_models:
+                    shift_resp = supabase.table("mistake_shifts").select("start_time").eq("user_id", user_id).eq("mode", "on").order("start_time", desc=True).limit(1).execute()
+                    if shift_resp.data and len(shift_resp.data) > 0:
+                        old_start_time = shift_resp.data[0].get("start_time")
+        except Exception:
+            pass
+        
+        # Υπολογισμός duration
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        duration_str = "-"
+        try:
+            resp = supabase.table("users").select("start_time").eq("user_id", user_id).execute()
+            start_time = None
+            if resp.data and len(resp.data) > 0:
+                start_time = resp.data[0].get("start_time")
+            if start_time:
+                old_dt = datetime.fromisoformat(start_time)
+                delta = now - old_dt
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                duration_str = f"{h}:{m:02d}"
+            else:
+                duration_str = "0:00"
+        except Exception as e:
+            print(f"DEBUG: Exception στο duration υπολογισμό (mistakeon): {e}")
+            duration_str = "0:00"
+        
+        # Αποθήκευση νέων models και start_time
+        try:
+            # Πρόσθεσε τα mistake models στα ενεργά (χωρίς να πειράζεις τα υπόλοιπα)
+            all_models = set(old_models) | set(selected)
+            starting_shift = not old_models
+            print(f"DEBUG: mistakeon upsert users: user_id={user_id} models={list(all_models)} selected={list(selected)} old_models={old_models}")
+            supabase.table("users").upsert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "first_name": user.first_name or "",
+                "models": list(all_models),
+                "active": True,
+                "start_time": now_iso if starting_shift else old_start_time if old_start_time else now_iso
+            }).execute()
+
+            # Καταγραφή shift ΠΑΝΤΑ (όχι μόνο αν δεν είχε κανένα)
+            if selected:
+                print(f"DEBUG: mistakeon insert mistake_shifts: user_id={user_id} models={list(selected)}")
+                supabase.table("mistake_shifts").insert({
+                    "user_id": user_id,
+                    "username": user.username or f"id_{user_id}",
+                    "models": list(selected),
+                    "start_time": now_iso,
+                    "on_time": now_iso,
+                    "active": True,
+                    "mode": "on"
+                }).execute()
+
+            # Φιλτράρω μόνο τα mistake models που ήταν ήδη ενεργά
+            old_mistake_models = [m for m in old_models if m in MISTAKE_MODELS]
+            
+            msg_text = (
+                f"⚡ MISTAKE MODE ON ⚡\n"
+                f"👤 @{user.username}\n"
+                f"🕐 {now.strftime('%H:%M')} | ⏱ {duration_str}\n"
+                f"📋 Mistake Models: {'Μόλις μπήκε!' if not old_mistake_models else ', '.join(old_mistake_models)}\n"
+                f"🎯 Νέα: {', '.join(selected) if selected else 'κανένα'}"
+            )
+            try:
+                await query.edit_message_text(msg_text)
+            except Exception as ex:
+                print(f"DEBUG: edit_message_text error: {ex}")
+            context.chat_data['mistakeon_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+    
+    elif data.startswith("mistakeon_"):
+        model = data[10:]  # Remove "mistakeon_" prefix
+        if model in unavailable:
+            await query.answer("Το model είναι ήδη ενεργό από άλλον χρήστη.", show_alert=True)
+            return
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        try:
+            await query.edit_message_reply_markup(reply_markup=build_mistakeon_keyboard(selected, unavailable))
+        except Exception as ex:
+            print(f"DEBUG: edit_message_reply_markup error: {ex}")
+        await query.answer()
+
+# --- /mistakeoff Command ---
+async def mistakeoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    
+    # Βρες τα ενεργά models του χρήστη
+    active_models = []
+    start_time = None
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if resp.data and len(resp.data) > 0:
+            active = resp.data[0].get("active")
+            if active:
+                active_models = resp.data[0].get("models") or []
+                if isinstance(active_models, str):
+                    try:
+                        import json
+                        active_models = json.loads(active_models)
+                    except Exception:
+                        active_models = []
+                start_time = resp.data[0].get("start_time")
+    except Exception:
+        pass
+    
+    # Φιλτράρω μόνο τα mistake models που είναι ενεργά
+    active_mistake_models = [m for m in active_models if m in MISTAKE_MODELS]
+    
+    if not active_mistake_models:
+        await update.message.reply_text("Δεν έχεις ενεργά mistake models.", reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID))
+        return
+    
+    selected_models = set()
+    sent = await update.message.reply_text(
+        "Επίλεξε mistake models για να κάνεις off:",
+        reply_markup=build_mistakeoff_keyboard(active_mistake_models, selected_models)
+    )
+    
+    if context.chat_data is not None and 'mistakeoff_sessions' not in context.chat_data:
+        context.chat_data['mistakeoff_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['mistakeoff_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'active_models': set(active_models),
+            'selected_models': selected_models,
+            'start_time': start_time
+        }
+
+def build_mistakeoff_keyboard(active_models, selected):
+    keyboard = []
+    row = []
+    for i, model in enumerate(active_models, 1):
+        checked = "🔴 " if model in selected else ""
+        row.append(dbg_btn(f"{checked}{model}", f"mistakeoff_{model}"))
+        if i % 4 == 0 or i == len(active_models):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "mistakeoff_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def mistakeoff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    print(f"DEBUG: mistakeoff_callback called with data={query.data if query and query.data else 'None'}")
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    
+    session = context.chat_data.get('mistakeoff_sessions', {}).get(msg.message_id) if context.chat_data and context.chat_data.get('mistakeoff_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    
+    initiator_id = session['initiator']
+    active_models = session['active_models']
+    selected = session['selected_models']
+    start_time = session['start_time']
+    
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    
+    data = query.data
+    if data == "mistakeoff_ok":
+        print(f"DEBUG: mistakeoff OK button pressed! selected={list(selected)}")
+        if not selected:
+            await query.answer("Επίλεξε τουλάχιστον ένα μοντέλο!", show_alert=True)
+            return
+        
+        # Υπολογισμός duration
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        duration_str = "-"
+        try:
+            if start_time:
+                old_dt = datetime.fromisoformat(start_time)
+                delta = now - old_dt
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                duration_str = f"{h}:{m:02d}"
+            else:
+                duration_str = "0:00"
+        except Exception as e:
+            print(f"DEBUG: Exception στο duration υπολογισμό (mistakeoff): {e}")
+            duration_str = "0:00"
+        
+        # Αποθήκευση αλλαγών
+        try:
+            remaining_models = list(active_models - selected)
+            supabase.table("users").upsert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "first_name": user.first_name or "",
+                "models": remaining_models,
+                "active": bool(remaining_models),
+                "start_time": None if not remaining_models else start_time
+            }).execute()
+            
+            # Εισαγωγή shift log
+            supabase.table("mistake_shifts").insert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "models": list(selected),
+                "start_time": start_time,
+                "on_time": now_iso,
+                "active": False,
+                "mode": "off"
+            }).execute()
+            
+            # Φιλτράρω μόνο τα mistake models που απομένουν
+            remaining_mistake_models = [m for m in remaining_models if m in MISTAKE_MODELS]
+            
+            msg_text = (
+                f"🛑 MISTAKE MODE OFF 🛑\n"
+                f"👤 @{user.username}\n"
+                f"🕐 {now.strftime('%H:%M')} | ⏱ {duration_str}\n"
+                f"❌ Έκλεισαν: {', '.join(selected)}\n"
+                f"{'🎉 Τέλειωσες τη βάρδιά σου!' if not remaining_mistake_models else '✅ Mistake Models: ' + ', '.join(remaining_mistake_models)}"
+            )
+            await query.edit_message_text(msg_text)
+            context.chat_data['mistakeoff_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+    
+    elif data.startswith("mistakeoff_"):
+        model = data[11:]  # Remove "mistakeoff_" prefix
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        try:
+            await query.edit_message_reply_markup(reply_markup=build_mistakeoff_keyboard([m for m in active_models if m in MISTAKE_MODELS], selected))
+        except Exception as ex:
+            print(f"DEBUG: edit_message_reply_markup error: {ex}")
+        await query.answer()
+
+# --- /liveon Command ---
+async def liveon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    
+    # Βρες τα ήδη ενεργά models του χρήστη
+    active_models = []
+    start_time = None
+    try:
+        resp = supabase.table("users").select("models,start_time,active").eq("user_id", user_id).execute()
+        if resp.data and len(resp.data) > 0:
+            active = resp.data[0].get("active")
+            if active:
+                active_models = resp.data[0].get("models") or []
+                if isinstance(active_models, str):
+                    try:
+                        import json
+                        active_models = json.loads(active_models)
+                    except Exception:
+                        active_models = []
+                start_time = resp.data[0].get("start_time")
+    except Exception:
+        pass
+    
+    # Βρες τα live models που είναι ήδη σε ενεργές live sessions από άλλους χρήστες
+    unavailable_live_models = set()
+    try:
+        resp = supabase.table("live_sessions").select("models").eq("active", True).execute()
+        for session in resp.data:
+            models = session.get("models") or []
+            if isinstance(models, str):
+                try:
+                    import json
+                    models = json.loads(models)
+                except Exception:
+                    models = []
+            # Φιλτράρω μόνο τα live models
+            live_models_in_session = [m for m in models if m in LIVE_MODELS]
+            unavailable_live_models.update(live_models_in_session)
+    except Exception:
+        pass
+    
+    # Φιλτράρω μόνο τα live models που είναι διαθέσιμα
+    available_live_models = [m for m in LIVE_MODELS if m not in unavailable_live_models]
+    
+    if not available_live_models:
+        await update.message.reply_text("Δεν υπάρχουν διαθέσιμα live models αυτή τη στιγμή.", reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID))
+        return
+    
+    selected_models = set()
+    sent = await update.message.reply_text(
+        "Επίλεξε live models για να κάνεις on:",
+        reply_markup=build_liveon_keyboard(selected_models, unavailable_live_models)
+    )
+    
+    if context.chat_data is not None and 'liveon_sessions' not in context.chat_data:
+        context.chat_data['liveon_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['liveon_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'selected_models': selected_models,
+            'unavailable_models': unavailable_live_models
+        }
+
+def build_liveon_keyboard(selected, unavailable):
+    keyboard = []
+    row = []
+    for i, model in enumerate(LIVE_MODELS, 1):
+        if model in unavailable:
+            row.append(dbg_btn(f"🔒 {model}", "ignore"))
+        else:
+            checked = "🟢 " if model in selected else ""
+            row.append(dbg_btn(f"{checked}{model}", f"liveon_{model}"))
+        if i % 4 == 0 or i == len(LIVE_MODELS):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "liveon_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def liveon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    print(f"DEBUG: liveon_callback called with data={query.data if query and query.data else 'None'}")
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    
+    session = context.chat_data.get('liveon_sessions', {}).get(msg.message_id) if context.chat_data and context.chat_data.get('liveon_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    
+    initiator_id = session['initiator']
+    selected = session['selected_models']
+    unavailable = session['unavailable_models']
+    
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    
+    data = query.data
+    if data == "ignore":
+        await query.answer("Το μοντέλο αυτή τη στιγμή είναι ήδη σε live session", show_alert=True)
+        return
+    
+    elif data == "liveon_ok":
+        print(f"DEBUG: liveon OK button pressed! selected={list(selected)}")
+        if not selected:
+            await query.answer("Επίλεξε τουλάχιστον ένα μοντέλο!", show_alert=True)
+            return
+        
+        # Ανάκτηση προηγούμενων models και start_time
+        old_models = []
+        old_start_time = None
+        had_no_models = False
+        try:
+            resp = supabase.table("users").select("models,start_time").eq("user_id", user_id).execute()
+            if resp.data and len(resp.data) > 0:
+                old_models = resp.data[0].get("models") or []
+                if isinstance(old_models, str):
+                    try:
+                        import json
+                        old_models = json.loads(old_models)
+                    except Exception:
+                        old_models = []
+                if not old_models:
+                    had_no_models = True
+                if old_models:
+                    shift_resp = supabase.table("live_sessions").select("start_time").eq("user_id", user_id).eq("mode", "on").order("start_time", desc=True).limit(1).execute()
+                    if shift_resp.data and len(shift_resp.data) > 0:
+                        old_start_time = shift_resp.data[0].get("start_time")
+        except Exception:
+            pass
+        
+        # Υπολογισμός duration
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        duration_str = "-"
+        try:
+            resp = supabase.table("users").select("start_time").eq("user_id", user_id).execute()
+            start_time = None
+            if resp.data and len(resp.data) > 0:
+                start_time = resp.data[0].get("start_time")
+            if start_time:
+                old_dt = datetime.fromisoformat(start_time)
+                delta = now - old_dt
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                duration_str = f"{h}:{m:02d}"
+            else:
+                duration_str = "0:00"
+        except Exception as e:
+            print(f"DEBUG: Exception στο duration υπολογισμό (liveon): {e}")
+            duration_str = "0:00"
+        
+        # Αποθήκευση νέων models και start_time
+        try:
+            # Πρόσθεσε τα live models στα ενεργά (χωρίς να πειράζεις τα υπόλοιπα)
+            all_models = set(old_models) | set(selected)
+            starting_shift = not old_models
+            print(f"DEBUG: liveon upsert users: user_id={user_id} models={list(all_models)} selected={list(selected)} old_models={old_models}")
+            supabase.table("users").upsert({
+                "user_id": user_id,
+                "username": user.username or f"id_{user_id}",
+                "first_name": user.first_name or "",
+                "models": list(all_models),
+                "active": True,
+                "start_time": now_iso if starting_shift else old_start_time if old_start_time else now_iso
+            }).execute()
+
+            # Καταγραφή shift ΠΑΝΤΑ (όχι μόνο αν δεν είχε κανένα)
+            if selected:
+                print(f"DEBUG: liveon insert live_sessions: user_id={user_id} models={list(selected)}")
+                supabase.table("live_sessions").insert({
+                    "user_id": user_id,
+                    "username": user.username or f"id_{user_id}",
+                    "models": list(selected),
+                    "start_time": now_iso,
+                    "on_time": now_iso,
+                    "active": True,
+                    "mode": "on",
+                    "chat_id": str(msg.chat.id) if msg and msg.chat else "0",
+                    "message_id": str(msg.message_id) if msg and msg.message_id else "0"
+                }).execute()
+
+            # Ειδοποίηση χρηστών που είναι σε live sessions με τα επιλεγμένα models
+            users_to_notify = []
+            try:
+                # Βρες όλους τους χρήστες που έχουν ενεργά live sessions με τα επιλεγμένα models
+                print(f"DEBUG: Searching for active live sessions...")
+                live_resp = supabase.table("live_sessions").select("user_id,username,models").eq("active", True).execute()
+                print(f"DEBUG: Found {len(live_resp.data)} active live sessions")
+                
+                for session in live_resp.data:
+                    session_models = session.get("models") or []
+                    if isinstance(session_models, str):
+                        try:
+                            session_models = json.loads(session_models)
+                        except Exception:
+                            session_models = []
+                    
+                    print(f"DEBUG: Session user_id={session.get('user_id')}, models={session_models}")
+                    
+                    # Ελέγχω αν κάποιο από τα επιλεγμένα models είναι ήδη σε live session
+                    conflicting_models = set(session_models) & set(selected)
+                    print(f"DEBUG: Conflicting models: {conflicting_models}")
+                    
+                    if conflicting_models:
+                        users_to_notify.append({
+                            "user_id": session.get("user_id"),
+                            "username": session.get("username"),
+                            "models": list(conflicting_models)
+                        })
+                        print(f"DEBUG: Added user {session.get('username')} to notify for models {conflicting_models}")
+            except Exception as e:
+                print(f"DEBUG: Error finding users to notify: {e}")
+            
+            print(f"DEBUG: Total users to notify: {len(users_to_notify)}")
+
+            # Φιλτράρω μόνο τα live models που ήταν ήδη ενεργά
+            old_live_models = [m for m in old_models if m in LIVE_MODELS]
+            
+            msg_text = (
+                f"🎥 LIVE MODE ON 🎥\n"
+                f"👤 @{user.username}\n"
+                f"🕐 {now.strftime('%H:%M')} | ⏱ {duration_str}\n"
+                f"📋 Live Models: {', '.join(selected)}"
+            )
+            
+            # Προσθήκη ειδοποίησης για χρήστες που πρέπει να βγουν
+            if users_to_notify:
+                msg_text += "\n\n⚠️ ΕΙΔΟΠΟΙΗΣΗ:"
+                for user_info in users_to_notify:
+                    models_str = ', '.join(user_info['models'])
+                    msg_text += f"\n👤 @{user_info['username']} - Βγες από: {models_str}"
+                    # Στείλε προσωπικό μήνυμα για κάθε model
+                    for model in user_info['models']:
+                        try:
+                            button = InlineKeyboardMarkup([[InlineKeyboardButton("Το είδα", callback_data=f"seenlive_{model}_{msg.chat.id}")]])
+                            print(f"DEBUG: Sending seenlive message to user_id={user_info['user_id']} for model={model}")
+                            sent_msg = await context.bot.send_message(
+                                chat_id=int(user_info['user_id']),
+                                text=f"⚠️ Το μοντέλο {model} κάνει live τώρα! Βγες από το live και πάτησε το κουμπί όταν το δεις.",
+                                reply_markup=button
+                            )
+                            print(f"DEBUG: Successfully sent seenlive message: {sent_msg.message_id}")
+                        except Exception as ex:
+                            print(f"DEBUG: Failed to send seenlive button to {user_info['user_id']}: {ex}")
+                            # Fallback: στέλνουμε στην ομάδα
+                            try:
+                                button = InlineKeyboardMarkup([[InlineKeyboardButton("Το είδα", callback_data=f"seenlive_{model}_{msg.chat.id}_{user_info['user_id']}")]])
+                                await context.bot.send_message(
+                                    chat_id=msg.chat.id,
+                                    text=f"⚠️ @{user_info['username']} - Το μοντέλο {model} κάνει live τώρα! Βγες από το live και πάτησε το κουμπί όταν το δεις.",
+                                    reply_markup=button
+                                )
+                            except Exception as ex2:
+                                print(f"DEBUG: Failed to send fallback message: {ex2}")
+            
+            try:
+                await query.edit_message_text(msg_text)
+            except Exception as ex:
+                print(f"DEBUG: edit_message_text error: {ex}")
+            context.chat_data['liveon_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+    
+    elif data.startswith("liveon_"):
+        model = data[7:]  # Remove "liveon_" prefix
+        if model in unavailable:
+            await query.answer("Το model είναι ήδη σε live session από άλλον χρήστη.", show_alert=True)
+            return
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        try:
+            await query.edit_message_reply_markup(reply_markup=build_liveon_keyboard(selected, unavailable))
+        except Exception as ex:
+            print(f"DEBUG: edit_message_reply_markup error: {ex}")
+        await query.answer()
+
+# --- /liveoff Command ---
+async def liveoff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message:
+        return
+    user_id = str(update.effective_user.id)
+    user = update.effective_user
+    
+    # Βρες τα ενεργά live models του χρήστη
+    active_live_models = []
+    try:
+        resp = supabase.table("live_sessions").select("models").eq("user_id", user_id).eq("active", True).execute()
+        for session in resp.data:
+            models = session.get("models") or []
+            if isinstance(models, str):
+                try:
+                    import json
+                    models = json.loads(models)
+                except Exception:
+                    models = []
+            active_live_models.extend(models)
+        active_live_models = list(set(active_live_models))  # Remove duplicates
+    except Exception:
+        pass
+    
+    if not active_live_models:
+        await update.message.reply_text("Δεν έχεις ενεργά live models αυτή τη στιγμή.", reply_to_message_id=get_reply_to_message_id(update, TARGET_REPLY_TO_MESSAGE_ID))
+        return
+    
+    selected_models = set()
+    sent = await update.message.reply_text(
+        "Επίλεξε live models για να κάνεις off:",
+        reply_markup=build_liveoff_keyboard(active_live_models, selected_models)
+    )
+    
+    if context.chat_data is not None and 'liveoff_sessions' not in context.chat_data:
+        context.chat_data['liveoff_sessions'] = {}
+    if context.chat_data is not None:
+        context.chat_data['liveoff_sessions'][sent.message_id] = {
+            'initiator': user_id,
+            'selected_models': selected_models,
+            'active_models': active_live_models
+        }
+
+def build_liveoff_keyboard(active_models, selected):
+    keyboard = []
+    row = []
+    for i, model in enumerate(active_models, 1):
+        checked = "🟢 " if model in selected else ""
+        row.append(dbg_btn(f"{checked}{model}", f"liveoff_{model}"))
+        if i % 4 == 0 or i == len(active_models):
+            keyboard.append(row)
+            row = []
+    keyboard.append([dbg_btn("✅ OK", "liveoff_ok"), dbg_btn("❌ Cancel", "cancel_action")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def liveoff_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    print(f"DEBUG: liveoff_callback called with data={query.data if query and query.data else 'None'}")
+    if query is None or context.chat_data is None or query.message is None or query.data is None:
+        return
+    user = query.from_user
+    if user is None:
+        return
+    user_id = str(user.id)
+    msg = query.message
+    
+    session = context.chat_data.get('liveoff_sessions', {}).get(msg.message_id) if context.chat_data and context.chat_data.get('liveoff_sessions') else None
+    if not session:
+        await query.answer("Αυτή η επιλογή δεν είναι πλέον ενεργή.", show_alert=True)
+        return
+    
+    initiator_id = session['initiator']
+    selected = session['selected_models']
+    active_models = session['active_models']
+    
+    if user_id != initiator_id:
+        await query.answer("Δεν έχεις δικαίωμα να κάνεις αυτή την ενέργεια", show_alert=True)
+        return
+    
+    data = query.data
+    
+    if data == "liveoff_ok":
+        print(f"DEBUG: liveoff OK button pressed! selected={list(selected)}")
+        if not selected:
+            await query.answer("Επίλεξε τουλάχιστον ένα μοντέλο!", show_alert=True)
+            return
+        
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        
+        try:
+            # Απενεργοποίηση των επιλεγμένων live sessions
+            # Πρώτα βρες όλες τις ενεργές live sessions του χρήστη
+            live_sessions_resp = supabase.table("live_sessions").select("user_id,models,start_time").eq("user_id", user_id).eq("active", True).execute()
+            
+            for session in live_sessions_resp.data:
+                session_models = session.get("models") or []
+                if isinstance(session_models, str):
+                    try:
+                        session_models = json.loads(session_models)
+                    except Exception:
+                        session_models = []
+                
+                # Ελέγχω αν η session περιέχει κάποιο από τα επιλεγμένα models
+                if any(model in session_models for model in selected):
+                    # Απενεργοποίηση της session χρησιμοποιώντας user_id και start_time
+                    supabase.table("live_sessions").update({
+                        "active": False,
+                        "off_time": now_iso
+                    }).eq("user_id", user_id).eq("start_time", session["start_time"]).eq("active", True).execute()
+            
+            # Αφαίρεση των live models από το users table
+            resp = supabase.table("users").select("models").eq("user_id", user_id).execute()
+            if resp.data and len(resp.data) > 0:
+                current_models = resp.data[0].get("models") or []
+                if isinstance(current_models, str):
+                    try:
+                        current_models = json.loads(current_models)
+                    except Exception:
+                        current_models = []
+                
+                # Αφαίρεση μόνο των επιλεγμένων live models
+                updated_models = [m for m in current_models if m not in selected]
+                
+                # Ενημέρωση του users table
+                supabase.table("users").update({
+                    "models": updated_models
+                }).eq("user_id", user_id).execute()
+            
+            msg_text = (
+                f"🎥 LIVE MODE OFF 🎥\n"
+                f"👤 @{user.username}\n"
+                f"🕐 {now.strftime('%H:%M')}\n"
+                f"📋 Live Models: {', '.join(selected)}"
+            )
+            
+            try:
+                await query.edit_message_text(msg_text)
+            except Exception as ex:
+                print(f"DEBUG: edit_message_text error: {ex}")
+            context.chat_data['liveoff_sessions'].pop(msg.message_id, None)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Σφάλμα αποθήκευσης: {e}")
+    
+    elif data.startswith("liveoff_"):
+        model = data[8:]  # Remove "liveoff_" prefix
+        if model in selected:
+            selected.remove(model)
+        else:
+            selected.add(model)
+        session['selected_models'] = selected
+        try:
+            await query.edit_message_reply_markup(reply_markup=build_liveoff_keyboard(active_models, selected))
+        except Exception as ex:
+            print(f"DEBUG: edit_message_reply_markup error: {ex}")
+        await query.answer()
+
+# --- Seen Live Callback ---
+async def seenlive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    user_id = str(user.id)
+    data = query.data
+    # data: seenlive_{model}_{groupid} or seenlive_{model}_{groupid}_{userid}
+    if not data.startswith("seenlive_"):
+        return
+    parts = data.split("_")
+    if len(parts) < 3:
+        await query.answer("Σφάλμα callback.", show_alert=True)
+        return
+    model = parts[1]
+    group_id = parts[2]
+    target_user_id = parts[3] if len(parts) > 3 else user_id
+    
+    # Ελέγχω ότι το πάτησε ο σωστός χρήστης (αν υπάρχει target_user_id)
+    if len(parts) > 3 and user_id != target_user_id:
+        await query.answer("Δεν έχεις δικαίωμα να πατήσεις αυτό το κουμπί.", show_alert=True)
+        return
+    try:
+        # 1. Ενημέρωσε τον χρήστη
+        await query.edit_message_text(f"✅ Το είδες!")
+        # 2. Στείλε μήνυμα στην ομάδα
+        try:
+            await context.bot.send_message(
+                chat_id=int(group_id),
+                text=f"@{user.username} το είδε για το {model}"
+            )
+        except Exception as ex:
+            print(f"DEBUG: Failed to send group seenlive message: {ex}")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Σφάλμα: {e}")
+
+# --- Seen Live ON Callback ---
+async def seenliveon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    user_id = str(user.id)
+    data = query.data
+    # data: seenliveon_{model}_{groupid}_{userid}
+    if not data.startswith("seenliveon_"):
+        return
+    parts = data.split("_")
+    if len(parts) < 4:
+        await query.answer("Σφάλμα callback.", show_alert=True)
+        return
+    model = parts[1]
+    group_id = parts[2]
+    target_user_id = parts[3]
+    if user_id != target_user_id:
+        await query.answer("Δεν έχεις δικαίωμα να πατήσεις αυτό το κουμπί.", show_alert=True)
+        return
+    try:
+        # 1. Πρόσθεσε το model στα ενεργά του χρήστη
+        resp = supabase.table("users").select("models").eq("user_id", user_id).execute()
+        current_models = []
+        if resp.data and len(resp.data) > 0:
+            current_models = resp.data[0].get("models") or []
+            if isinstance(current_models, str):
+                try:
+                    current_models = json.loads(current_models)
+                except Exception:
+                    current_models = []
+        if model not in current_models:
+            current_models.append(model)
+            supabase.table("users").update({"models": current_models, "active": True}).eq("user_id", user_id).execute()
+        # 2. Δημιούργησε νέα live_sessions για το model
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        supabase.table("live_sessions").insert({
+            "user_id": user_id,
+            "username": user.username or f"id_{user_id}",
+            "models": [model],
+            "start_time": now_iso,
+            "on_time": now_iso,
+            "active": True,
+            "mode": "on",
+            "chat_id": str(group_id),
+            "message_id": "0"
+        }).execute()
+        # 3. Ενημέρωσε τον χρήστη
+        await query.edit_message_text(f"✅ Έκανες πάλι on το {model}!")
+        # 4. Στείλε μήνυμα στην ομάδα
+        try:
+            await context.bot.send_message(
+                chat_id=int(group_id),
+                text=f"@{user.username} το είδε και έκανε πάλι on το {model}"
+            )
+        except Exception as ex:
+            print(f"DEBUG: Failed to send group seenliveon message: {ex}")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Σφάλμα: {e}")
+
+# --- Main ---
+async def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("register", register))
+    app.add_handler(CommandHandler("on", on_command))
+    app.add_handler(CommandHandler("off", off_command))
+    app.add_handler(CommandHandler("active", active_command))
+    app.add_handler(CommandHandler("freemodels", freemodels_command))
+    app.add_handler(CommandHandler("break", break_command))
+    app.add_handler(CommandHandler("back", back_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("give", give_command))
+    app.add_handler(CallbackQueryHandler(models_callback, pattern="^(model_|models_ok)"))
+    app.add_handler(CallbackQueryHandler(off_callback, pattern="^(offmodel_|offmodels_ok)"))
+    app.add_handler(CallbackQueryHandler(freepick_callback, pattern="^freepick_"))
+    app.add_handler(CallbackQueryHandler(breaklen_callback, pattern="^breaklen_"))
+    app.add_handler(CallbackQueryHandler(give_callback, pattern="^(givepick_|giveok|confirm_|reject_|acceptgive_)") )
+    app.add_handler(CallbackQueryHandler(give_admin_callback, pattern="^(giveapprove_|givereject_)") )
+    app.add_handler(CallbackQueryHandler(give_final_accept_callback, pattern="^givefinalaccept_"))
+    app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel_action"))
+    app.add_handler(MessageHandler(filters.Regex(r"^!status "), mention_status_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, custom_break_handler))
+    app.add_handler(CommandHandler("notify", notify_command))
+    app.add_handler(CallbackQueryHandler(notify_user_callback, pattern="^notifuser_"))
+    app.add_handler(CallbackQueryHandler(notify_model_callback, pattern="^notifymodel_"))
+    app.add_handler(CallbackQueryHandler(notify_accept_reject_callback, pattern="^(notifaccept_|notifreject_)"))
+    app.add_handler(CommandHandler("myprogram", handle_myprogram))
+    app.add_handler(CommandHandler("weekly_program", handle_weekly_program))
+    app.add_handler(CommandHandler("durations_today", handle_durations_today))
+    app.add_handler(CommandHandler("durations", handle_durations_month))
+    app.add_handler(CommandHandler("durations_june", handle_durations_month))
+    app.add_handler(CommandHandler("durations_may", handle_durations_month))
+    app.add_handler(CommandHandler("durations_july", handle_durations_month))
+    app.add_handler(CommandHandler("mistakeon", mistakeon_command))
+    app.add_handler(CallbackQueryHandler(mistakeon_callback, pattern="^mistakeon_"))
+    app.add_handler(CommandHandler("mistakeoff", mistakeoff_command))
+    app.add_handler(CallbackQueryHandler(mistakeoff_callback, pattern="^mistakeoff_"))
+    app.add_handler(CommandHandler("liveon", liveon_command))
+    app.add_handler(CallbackQueryHandler(liveon_callback, pattern="^liveon_"))
+    app.add_handler(CommandHandler("liveoff", liveoff_command))
+    app.add_handler(CallbackQueryHandler(liveoff_callback, pattern="^liveoff_"))
+    app.add_handler(CallbackQueryHandler(seenlive_callback, pattern="^seenlive_"))
+    app.add_handler(CallbackQueryHandler(seenliveon_callback, pattern="^seenliveon_"))
+    print("Ξεκινάει το bot...")
+    await app.run_polling()
+
+def get_reply_to_message_id(update, fallback_id=None):
+    if hasattr(update, 'message') and update.message and hasattr(update.message, 'message_id') and update.message.message_id:
+        return update.message.message_id
+    if hasattr(update, 'callback_query') and update.callback_query and update.callback_query.message and hasattr(update.callback_query.message, 'message_id') and update.callback_query.message.message_id:
+        return update.callback_query.message.message_id
+    return fallback_id
+
+if __name__ == "__main__":
+    import asyncio
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "already running" in str(e):
+            loop = asyncio.get_event_loop()
+            loop.create_task(main())
+            loop.run_forever()
+        else:
+            raise 
