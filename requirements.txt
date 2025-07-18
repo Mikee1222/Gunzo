@@ -4,4 +4,4 @@ pytz
 requests
 nest_asyncio
 supabase
-
+httpx>=0.24.1
